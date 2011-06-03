@@ -1,1 +1,10 @@
 *.o
+*.dylib
+
+# hashit build artifacts
+deps/hashit-0.9.7/CMakeCache.txt
+deps/hashit-0.9.7/CMakeFiles/
+deps/hashit-0.9.7/Makefile
+deps/hashit-0.9.7/cmake_install.cmake
+deps/hashit-0.9.7/libhashit.pc
+
