@@ -5,3 +5,7 @@
 dependencies:
 	@echo MAKE hashit
 	@cd deps/hashit-0.9.7 && cmake . && $(MAKE)
+	@echo MAKE hiredis
+	@cd deps/hiredis && $(MAKE)
+	@echo MAKE http_parser
+	@cd deps/http-parser && $(MAKE) package
