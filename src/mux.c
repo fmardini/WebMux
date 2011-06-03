@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <assert.h>
@@ -20,6 +21,12 @@ int set_nonblock (int fd) {
   return 0;
 }
 
+typedef struct {
+  int reqDone;
+  char *host;
+  char *origin;
+} muxCon;
+
 void check_error(int res, char *msg) {
   if (res >= 0) return;
   fprintf(stderr, "Error (%s): %s\n", msg, strerror(errno));
@@ -31,48 +38,29 @@ int on_complete(http_parser *_) {
   return 0;
 }
 
-int on_headers_complete(http_parser *parser) {
-  puts("headers complete");
+int process_key(char *k, unsigned int *res) {
+  int j = 0, sp = 0;
+  char digits[32];
+  for (; *k; k++) {
+    if (*k == ' ') sp++;
+    else if (isdigit(*k)) { digits[j++] = *k; }
+  }
+  digits[j] = '\0';
+  if (sp == 0 || j == 0) { return -1; }
+  *res = strtoul(digits, NULL, 10) / sp;
   return 0;
-}
-
-int on_body(http_parser *parser, const char *at, size_t len) {
-  write(STDOUT_FILENO, at, len);
-  return 0;
-}
-
-int count_spaces(char *s) {
-  int i, count = 0;
-  for (i = 0; s[i]; i++)
-    if (s[i] == ' ') count++;
-  return count;
-}
-
-int digits_from_str(char *s) {
-  int i, j = 0;
-  char *res = (char *)malloc(sizeof(char) * (strlen(s) + 1));
-  for (i = 0; s[i]; i++)
-    if (s[i] >= '0' && s[i] <= '9') res[j++] = s[i];
-  res[j] = '\0';
-  i = atoi(res);
-  free(res);
-  return i;
 }
 
 
 unsigned char *compute_handshake(char *f1, char *f2, char *last8) {
-  unsigned int k1 = digits_from_str(f1);
-  unsigned int k2 = digits_from_str(f2);
-  int s1 = count_spaces(f1);
-  int s2 = count_spaces(f2);
-
-  if (s1 == 0 || s2 == 0) perror("invalid handshake");
-  unsigned int v1 = htonl(k1 / s1), v2 = htonl(k2 / s2);
+  unsigned int k1, k2;
+  if (process_key(f1, &k1) == -1 || process_key(f2, &k2) == -1) { fprintf(stderr, "invalid keys\n"); }
+  k1 = htonl(k1); k2 = htonl(k2);
   unsigned char kk[16];
-  memcpy(kk, &v1, 4);
-  memcpy(kk + 4, &v2, 4);
+  memcpy(kk, &k1, 4);
+  memcpy(kk + 4, &k2, 4);
   memcpy(kk + 8, last8, 8);
-  unsigned char *out = (unsigned char *)calloc(1, 17 * sizeof(char));
+  unsigned char *out = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
   MD5_CTX ctx;
   MD5_Init(&ctx);
   MD5_Update(&ctx, kk, 16);
@@ -80,20 +68,6 @@ unsigned char *compute_handshake(char *f1, char *f2, char *last8) {
   return out;
 }
 
-// static char headers_fields[] = {
-  // "Sec-WebSocket-Protocol", // echoed by server to indicate it supports the protocol
-  // "Host",                   // included by server in Sec-WebSocket-Location
-  // "Origin",                 // server includes a Sec-WebSocket-Origin field with that origin
-  // "Sec-WebSocket-Key1",
-  // "Sec-WebSocket-Key2"
-
-  // RESPONSE
-  // HTTP/1.1 101 WebSocket Protocol Handshake
-  // Upgrade: WebSocket
-  // Connection: Upgrade
-  // Sec-WebSocket-Origin: http://example.com
-  // Sec-WebSocket-Location: ws://example.com/
-// };
 
 #define CURRENT_LINE (&headers[num_headers])
 
@@ -197,9 +171,7 @@ int main(int argc, char **argv) {
   settings.on_header_field = on_header_field;
   settings.on_header_value = on_header_value;
   settings.on_message_complete = on_complete;
-  settings.on_body             = on_body;
   settings.on_path             = on_path;
-  settings.on_headers_complete = on_headers_complete;
   http_parser *parser = (http_parser *)malloc(sizeof(http_parser));
   http_parser_init(parser, HTTP_REQUEST);
 
