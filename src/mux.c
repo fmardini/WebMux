@@ -21,21 +21,36 @@ int set_nonblock (int fd) {
   return 0;
 }
 
+#define MAX_HEADERS 32
+
+typedef struct header {
+  char *field;
+  size_t field_len;
+  char *value;
+  size_t value_len;
+} header;
+
 typedef struct {
+  header list[MAX_HEADERS];
+  int last_was_value;
+  int num_headers;
+} headers;
+
+typedef struct {
+  int connfd;
   int reqDone;
+  char body[8];
   char *host;
   char *origin;
-} muxCon;
+  char *req_path;
+  header *last_header;
+  headers hs;
+} muxConn;
+
 
 void check_error(int res, char *msg) {
   if (res >= 0) return;
   fprintf(stderr, "Error (%s): %s\n", msg, strerror(errno));
-}
-
-int done_with_req;
-int on_complete(http_parser *_) {
-  done_with_req = 1;
-  return 0;
 }
 
 int process_key(char *k, unsigned int *res) {
@@ -51,7 +66,6 @@ int process_key(char *k, unsigned int *res) {
   return 0;
 }
 
-
 unsigned char *compute_handshake(char *f1, char *f2, char *last8) {
   unsigned int k1, k2;
   if (process_key(f1, &k1) == -1 || process_key(f2, &k2) == -1) { fprintf(stderr, "invalid keys\n"); }
@@ -66,67 +80,6 @@ unsigned char *compute_handshake(char *f1, char *f2, char *last8) {
   MD5_Update(&ctx, kk, 16);
   MD5_Final(out, &ctx);
   return out;
-}
-
-
-#define CURRENT_LINE (&headers[num_headers])
-
-struct header {
-  char *field;
-  size_t field_len;
-  char *value;
-  size_t value_len;
-} headers[100];
-static int num_headers = 0;
-static int last_was_value = 0;
-
-int on_header_field (http_parser *_, const char *at, size_t len) {
-  if (last_was_value) {
-    num_headers++;
-
-    CURRENT_LINE->value = NULL;
-    CURRENT_LINE->value_len = 0;
-
-    CURRENT_LINE->field_len = len;
-    CURRENT_LINE->field = malloc(len+1);
-    strncpy(CURRENT_LINE->field, at, len);
-
-  } else {
-    assert(CURRENT_LINE->value == NULL);
-    assert(CURRENT_LINE->value_len == 0);
-
-    CURRENT_LINE->field_len += len;
-    CURRENT_LINE->field = realloc(CURRENT_LINE->field, CURRENT_LINE->field_len + 1);
-    strncat(CURRENT_LINE->field, at, len);
-  }
-
-  CURRENT_LINE->field[CURRENT_LINE->field_len] = '\0';
-  last_was_value = 0;
-  return 0;
-}
-
-int on_header_value (http_parser *_, const char *at, size_t len) {
-  if (!last_was_value) {
-    CURRENT_LINE->value_len = len;
-    CURRENT_LINE->value = malloc(len+1);
-    strncpy(CURRENT_LINE->value, at, len);
-
-  } else {
-    CURRENT_LINE->value_len += len;
-    CURRENT_LINE->value = realloc(CURRENT_LINE->value, CURRENT_LINE->value_len + 1);
-    strncat(CURRENT_LINE->value, at, len);
-  }
-
-  CURRENT_LINE->value[CURRENT_LINE->value_len] = '\0';
-  last_was_value = 1;
-  return 0;
-}
-
-static char *req_path;
-int on_path(http_parser *_, const char *at, size_t len) {
-  req_path = (char *)malloc(sizeof(char) * len);
-  memcpy(req_path, at, len);
-  return 0;
 }
 
 char *server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol) {
@@ -149,6 +102,64 @@ char *server_handshake(unsigned char *md5, char *origin, char *loc, char *protoc
   return resp;
 }
 
+#define CURRENT_LINE(_mc) (&(_mc)->hs.list[(_mc)->hs.num_headers])
+
+int on_header_field (http_parser *parser, const char *at, size_t len) {
+  muxConn *conn = (muxConn *)parser->data;
+  if (conn->hs.last_was_value) {
+    conn->hs.num_headers++;
+
+    CURRENT_LINE(conn)->value = NULL;
+    CURRENT_LINE(conn)->value_len = 0;
+
+    CURRENT_LINE(conn)->field_len = len;
+    CURRENT_LINE(conn)->field = malloc(len+1);
+    strncpy(CURRENT_LINE(conn)->field, at, len);
+
+  } else {
+    assert(CURRENT_LINE(conn)->value == NULL);
+    assert(CURRENT_LINE(conn)->value_len == 0);
+
+    CURRENT_LINE(conn)->field_len += len;
+    CURRENT_LINE(conn)->field = realloc(CURRENT_LINE(conn)->field, CURRENT_LINE(conn)->field_len + 1);
+    strncat(CURRENT_LINE(conn)->field, at, len);
+  }
+
+  CURRENT_LINE(conn)->field[CURRENT_LINE(conn)->field_len] = '\0';
+  conn->hs.last_was_value = 0;
+  return 0;
+}
+
+int on_header_value (http_parser *parser, const char *at, size_t len) {
+  muxConn *conn = (muxConn *)parser->data;
+  if (!conn->hs.last_was_value) {
+    CURRENT_LINE(conn)->value_len = len;
+    CURRENT_LINE(conn)->value = malloc(len+1);
+    strncpy(CURRENT_LINE(conn)->value, at, len);
+
+  } else {
+    CURRENT_LINE(conn)->value_len += len;
+    CURRENT_LINE(conn)->value = realloc(CURRENT_LINE(conn)->value, CURRENT_LINE(conn)->value_len + 1);
+    strncat(CURRENT_LINE(conn)->value, at, len);
+  }
+
+  CURRENT_LINE(conn)->value[CURRENT_LINE(conn)->value_len] = '\0';
+  conn->hs.last_was_value = 1;
+  return 0;
+}
+
+int on_complete(http_parser *parser) {
+  ((muxConn *)parser->data)->reqDone = 1;
+  return 0;
+}
+
+int on_path(http_parser *parser, const char *at, size_t len) {
+  ((muxConn *)parser->data)->req_path = (char *)malloc(sizeof(char) * len);
+  memcpy(((muxConn *)parser->data)->req_path, at, len);
+  return 0;
+}
+
+
 int main(int argc, char **argv) {
   int listenfd;
   struct sockaddr_in servaddr, cliaddr;
@@ -168,33 +179,34 @@ int main(int argc, char **argv) {
   check_error(connfd, "accept");
 
   http_parser_settings settings;
+  muxConn *conn = (muxConn *)calloc(1, sizeof(muxConn)); // ZEROED-OUT
   settings.on_header_field = on_header_field;
   settings.on_header_value = on_header_value;
   settings.on_message_complete = on_complete;
-  settings.on_path             = on_path;
+  settings.on_path = on_path;
   http_parser *parser = (http_parser *)malloc(sizeof(http_parser));
   http_parser_init(parser, HTTP_REQUEST);
+  parser->data = conn;
 
   char buf[1024 * 4];
-  char body[8];
-  done_with_req = 0;
   ssize_t recved;
   ssize_t len_parsed;
 
-  while (!done_with_req) {
+  while (!conn->reqDone) {
     recved = recv(connfd, buf, 4 * 1024, 0);
     len_parsed = http_parser_execute(parser, &settings, buf, recved);
 
     if (parser->upgrade) {
-      memcpy(body, buf + len_parsed + 1, recved - len_parsed - 1);
+      // the +1 is needed since in this case buf[len_parsed] is the \n, BUG??
+      memcpy(conn->body, buf + len_parsed + 1, recved - len_parsed - 1);
     } else if (len_parsed != recved)
       fprintf(stderr, "PARSE ERROR\n");
   }
-  done_with_req = 0;
 
   int i;
   char *keys[2], *p, *origin, *host;
-  for (i = 0; i <= num_headers; i++) {
+  header *headers = conn->hs.list;
+  for (i = 0; i <= conn->hs.num_headers; i++) {
     printf("HEADER ===> %s : %s\n", headers[i].field, headers[i].value);
     if ((p = strstr(headers[i].field, "Sec-WebSocket-Key"))) {
       keys[*(p + strlen("Sec-WebSocket-Key")) - '1'] = headers[i].value;
@@ -210,9 +222,9 @@ int main(int argc, char **argv) {
   printf("origin: %s\n", origin);
 
   if (p != NULL) {
-    unsigned char *hand_shake = compute_handshake(keys[0], keys[1], body);
+    unsigned char *hand_shake = compute_handshake(keys[0], keys[1], conn->body);
     char loc[256];
-    snprintf(loc, 256, "%s%s", host, req_path);
+    snprintf(loc, 256, "%s%s", host, conn->req_path);
     char *resp = server_handshake(hand_shake, origin, loc, NULL);
     write(connfd, resp, strlen(resp));
   } else {
