@@ -52,7 +52,6 @@ void free_mux_conn(muxConn *conn) {
   free(conn->req_path);
   int i;
   header p;
-  printf("num headers = %d\n", conn->hs.num_headers);
   for (i = 0; i < conn->hs.num_headers; i++) {
     p = conn->hs.list[i];
     free(p.field); free(p.value);
@@ -116,7 +115,7 @@ int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol
 int handshake_connection(muxConn *conn) {
   unsigned char *cksum = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
   compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum);
-  char *loc = (char *)calloc(1, (strlen(conn->host) + strlen(conn->req_path)) * sizeof(char));
+  char *loc = (char *)calloc(1, (strlen(conn->host) + strlen(conn->req_path) + 1) * sizeof(char));
   sprintf(loc, "%s%s", conn->host, conn->req_path);
   char *resp = (char *)malloc(2048 * sizeof(char));
   server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048);
@@ -132,7 +131,6 @@ void process_last_header(muxConn *conn) {
   printf("HEADER ===> %s : %s\n", last_header->field, last_header->value);
   if (strstr(last_header->field, "Sec-WebSocket-Key")) {
     int idx = *(last_header->field + strlen("Sec-WebSocket-Key")) - '1';
-    printf("idx = %d\n", idx);
     if (0 <= idx && idx <= 1) { conn->keys[idx] = last_header->value; }
   } else if (strstr(last_header->field, "Origin")) {
     conn->origin = last_header->value;
@@ -204,8 +202,10 @@ int on_headers_complete(http_parser *parser) {
 }
 
 int on_path(http_parser *parser, const char *at, size_t len) {
-  ((muxConn *)parser->data)->req_path = (char *)malloc(sizeof(char) * len);
-  memcpy(((muxConn *)parser->data)->req_path, at, len);
+  muxConn *conn = (muxConn *)parser->data;
+  conn->req_path = (char *)malloc(sizeof(char) * (len + 1));
+  memcpy(conn->req_path, at, len);
+  conn->req_path[len] = '\0';
   return 0;
 }
 
