@@ -1,5 +1,6 @@
 *.o
 *.dylib
+*.dSYM
 
 # hashit build artifacts
 deps/hashit-0.9.7/CMakeCache.txt

@@ -40,12 +40,25 @@ typedef struct {
   int connfd;
   int reqDone;
   char body[8];
-  char *host;
-  char *origin;
   char *req_path;
-  header *last_header;
+  char *keys[2]; // points to value in headers list
+  char *origin; // points to value in headers list
+  char *host; // points to value in headers list
+  char *protocol; // points to value in headers list
   headers hs;
 } muxConn;
+
+void free_mux_conn(muxConn *conn) {
+  free(conn->req_path);
+  int i;
+  header p;
+  printf("num headers = %d\n", conn->hs.num_headers);
+  for (i = 0; i < conn->hs.num_headers; i++) {
+    p = conn->hs.list[i];
+    free(p.field); free(p.value);
+  }
+  free(conn);
+}
 
 
 void check_error(int res, char *msg) {
@@ -66,47 +79,77 @@ int process_key(char *k, unsigned int *res) {
   return 0;
 }
 
-unsigned char *compute_handshake(char *f1, char *f2, char *last8) {
+int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
   unsigned int k1, k2;
-  if (process_key(f1, &k1) == -1 || process_key(f2, &k2) == -1) { fprintf(stderr, "invalid keys\n"); }
+  if (process_key(f1, &k1) == -1 || process_key(f2, &k2) == -1) { return -1; }
   k1 = htonl(k1); k2 = htonl(k2);
   unsigned char kk[16];
   memcpy(kk, &k1, 4);
   memcpy(kk + 4, &k2, 4);
   memcpy(kk + 8, last8, 8);
-  unsigned char *out = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
   MD5_CTX ctx;
   MD5_Init(&ctx);
   MD5_Update(&ctx, kk, 16);
   MD5_Final(out, &ctx);
-  return out;
+  return 0;
 }
 
-char *server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol) {
-  char *resp = (char *)malloc(1024 * sizeof(char));
+int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len) {
   char *p = resp;
   int len = 0, n;
-  n = snprintf(p, 1024 - len, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
+  n = snprintf(p, resp_len - len, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
   p += n; len += n;
-  n = snprintf(p, 1024 - len, "Sec-WebSocket-Origin: %s\r\n", origin);
+  n = snprintf(p, resp_len - len, "Sec-WebSocket-Origin: %s\r\n", origin);
   p += n; len += n;
-  n = snprintf(p, 1024 - len, "Sec-WebSocket-Location: ws://%s\r\n", loc);
+  n = snprintf(p, resp_len - len, "Sec-WebSocket-Location: ws://%s\r\n", loc);
   p += n; len += n;
   if (protocol != NULL) {
-    n = snprintf(p, 1024 - len, "Sec-WebSocket-Protocal: %s\r\n", protocol);
+    n = snprintf(p, resp_len - len, "Sec-WebSocket-Protocal: %s\r\n", protocol);
     p += n; len += n;
   }
-  n = snprintf(p, 1024 - len, "\r\n%s", md5);
+  n = snprintf(p, resp_len - len, "\r\n%s", md5);
   p += n; len += n;
   resp[len] = '\0';
-  return resp;
+  return 0;
+}
+
+int handshake_connection(muxConn *conn) {
+  unsigned char *cksum = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
+  compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum);
+  char *loc = (char *)calloc(1, (strlen(conn->host) + strlen(conn->req_path)) * sizeof(char));
+  sprintf(loc, "%s%s", conn->host, conn->req_path);
+  char *resp = (char *)malloc(2048 * sizeof(char));
+  server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048);
+  write(conn->connfd, resp, strlen(resp));
+  free(cksum); free(loc); free(resp);
+  return 0;
 }
 
 #define CURRENT_LINE(_mc) (&(_mc)->hs.list[(_mc)->hs.num_headers])
 
+void process_last_header(muxConn *conn) {
+  header *last_header = &conn->hs.list[conn->hs.num_headers];
+  printf("HEADER ===> %s : %s\n", last_header->field, last_header->value);
+  if (strstr(last_header->field, "Sec-WebSocket-Key")) {
+    int idx = *(last_header->field + strlen("Sec-WebSocket-Key")) - '1';
+    printf("idx = %d\n", idx);
+    if (0 <= idx && idx <= 1) { conn->keys[idx] = last_header->value; }
+  } else if (strstr(last_header->field, "Origin")) {
+    conn->origin = last_header->value;
+  } else if (strstr(last_header->field, "Host")) {
+    conn->host = last_header->value;
+  } else if (strstr(last_header->field, "Sec-WebSocket-Protocol")) {
+    conn->protocol = last_header->value;
+  }
+}
+
 int on_header_field (http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
   if (conn->hs.last_was_value) {
+    // last_header points to a complete header, do any processing
+    process_last_header(conn);
+
+    // handle next
     conn->hs.num_headers++;
 
     CURRENT_LINE(conn)->value = NULL;
@@ -153,6 +196,13 @@ int on_complete(http_parser *parser) {
   return 0;
 }
 
+int on_headers_complete(http_parser *parser) {
+  muxConn *conn = (muxConn *)parser->data;
+  process_last_header(conn);
+  conn->hs.num_headers++;
+  return 0;
+}
+
 int on_path(http_parser *parser, const char *at, size_t len) {
   ((muxConn *)parser->data)->req_path = (char *)malloc(sizeof(char) * len);
   memcpy(((muxConn *)parser->data)->req_path, at, len);
@@ -183,6 +233,7 @@ int main(int argc, char **argv) {
   settings.on_header_field = on_header_field;
   settings.on_header_value = on_header_value;
   settings.on_message_complete = on_complete;
+  settings.on_headers_complete = on_headers_complete;
   settings.on_path = on_path;
   http_parser *parser = (http_parser *)malloc(sizeof(http_parser));
   http_parser_init(parser, HTTP_REQUEST);
@@ -199,40 +250,28 @@ int main(int argc, char **argv) {
 
     if (parser->upgrade) {
       // the +1 is needed since in this case buf[len_parsed] is the \n, BUG??
-      memcpy(conn->body, buf + len_parsed + 1, recved - len_parsed - 1);
+      if (recved - len_parsed - 1 == 8) {
+        memcpy(conn->body, buf + len_parsed + 1, recved - len_parsed - 1);
+      } else
+        fprintf(stderr, "invalid body length");
     } else if (len_parsed != recved)
       fprintf(stderr, "PARSE ERROR\n");
   }
 
-  int i;
-  char *keys[2], *p, *origin, *host;
-  header *headers = conn->hs.list;
-  for (i = 0; i <= conn->hs.num_headers; i++) {
-    printf("HEADER ===> %s : %s\n", headers[i].field, headers[i].value);
-    if ((p = strstr(headers[i].field, "Sec-WebSocket-Key"))) {
-      keys[*(p + strlen("Sec-WebSocket-Key")) - '1'] = headers[i].value;
-    } else if ((p = strstr(headers[i].field, "Origin"))) {
-      origin = headers[i].value;
-    } else if ((p = strstr(headers[i].field, "Host"))) {
-      host = headers[i].value;
-    }
-  }
-  printf("k1: %s\n", keys[0]);
-  printf("k2: %s\n", keys[1]);
-  printf("host: %s\n", host);
-  printf("origin: %s\n", origin);
+  printf("k1: %s\n", conn->keys[0]);
+  printf("k2: %s\n", conn->keys[1]);
+  printf("host: %s\n", conn->host);
+  printf("origin: %s\n", conn->origin);
 
-  if (p != NULL) {
-    unsigned char *hand_shake = compute_handshake(keys[0], keys[1], conn->body);
-    char loc[256];
-    snprintf(loc, 256, "%s%s", host, conn->req_path);
-    char *resp = server_handshake(hand_shake, origin, loc, NULL);
-    write(connfd, resp, strlen(resp));
+  if (conn->keys[0] != NULL) {
+    handshake_connection(conn);
   } else {
     fprintf(stderr, "could not find keys\n");
   }
 
   char t[1]; read(STDIN_FILENO, t, 1);
+  free_mux_conn(conn);
+  free(parser);
   close(connfd);
   close(listenfd);
 
