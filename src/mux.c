@@ -188,6 +188,7 @@ int main(int argc, char **argv) {
   http_parser_init(parser, HTTP_REQUEST);
   parser->data = conn;
 
+  conn->connfd = connfd;
   char buf[1024 * 4];
   ssize_t recved;
   ssize_t len_parsed;
