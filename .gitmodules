@@ -1,3 +1,6 @@
 [submodule "deps/http-parser"]
 	path = deps/http-parser
 	url = git://github.com/ry/http-parser.git
+[submodule "deps/hiredis"]
+	path = deps/hiredis
+	url = git://github.com/antirez/hiredis.git
