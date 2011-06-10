@@ -10,10 +10,11 @@
 #include <errno.h>
 #include <assert.h>
 #include <openssl/md5.h>
+#include <ev.h>
 
 #include "../deps/http-parser/http_parser.h"
 
-int set_nonblock (int fd) {
+int set_nonblock(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags == -1) return -1;
   if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
@@ -38,7 +39,7 @@ typedef struct {
 
 typedef struct {
   int connfd;
-  int reqDone;
+  int handshakeDone;
   char body[8];
   char *req_path;
   char *keys[2]; // points to value in headers list
@@ -46,6 +47,10 @@ typedef struct {
   char *host; // points to value in headers list
   char *protocol; // points to value in headers list
   headers hs;
+  char *in_buf;
+  size_t in_buf_len;
+  ssize_t in_buf_contents;
+  http_parser *parser;
 } muxConn;
 
 void free_mux_conn(muxConn *conn) {
@@ -190,7 +195,7 @@ int on_header_value (http_parser *parser, const char *at, size_t len) {
 }
 
 int on_complete(http_parser *parser) {
-  ((muxConn *)parser->data)->reqDone = 1;
+  ((muxConn *)parser->data)->handshakeDone = 1;
   return 0;
 }
 
@@ -210,70 +215,118 @@ int on_path(http_parser *parser, const char *at, size_t len) {
 }
 
 
+// LIBEV CALLBACKS
+http_parser_settings settings;
+
+void disconnectAndClean(ev_io *w) {
+  ((void) w);
+  // cleanup muxConn and http_parser
+  // close connection
+  // stop w
+}
+
+static void client_read_cb(EV_P_ ev_io *w, int revents) {
+  printf("client sent some data\n");
+  muxConn *conn = w->data;
+  ssize_t recved;
+
+  if (!conn->handshakeDone) {
+    ssize_t len_parsed;
+    http_parser *parser = conn->parser;
+    recved = recv(conn->connfd, conn->in_buf, conn->in_buf_len, 0);
+    len_parsed = http_parser_execute(parser, &settings, conn->in_buf, recved);
+
+    if (parser->upgrade) {
+      // the +1 is needed since in this case conn->in_buf[len_parsed] is the \n, BUG??
+      if (recved - len_parsed - 1 == 8) {
+        memcpy(conn->body, conn->in_buf + len_parsed + 1, recved - len_parsed - 1);
+      } else {
+        fprintf(stderr, "invalid body length");
+        disconnectAndClean(w);
+      }
+    } else if (len_parsed != recved) {
+      fprintf(stderr, "PARSE ERROR\n");
+      disconnectAndClean(w);
+    }
+    if (conn->keys[0] != NULL) { // IF ALL IS VALID???
+      printf("handshaking fnat\n");
+      handshake_connection(conn);
+    } else {
+      fprintf(stderr, "invalid client handshake\n");
+      disconnectAndClean(w);
+    }
+  } else { // TODO: implement websockets framing
+    // if buffer full reallocate
+    if (conn->in_buf_len == conn->in_buf_contents) {
+      size_t new_len = conn->in_buf_len * 2;
+      conn->in_buf = realloc(conn->in_buf, new_len);
+      conn->in_buf_len = new_len;
+    }
+    recved = recv(conn->connfd, conn->in_buf + conn->in_buf_contents, conn->in_buf_len - conn->in_buf_contents, 0);
+    conn->in_buf_contents += recved;
+  }
+}
+
+static void listening_socket_cb(EV_P_ ev_io *w, int revents) {
+  printf("new connection(s) detected\n");
+  while (1) {
+    struct sockaddr_in addr;
+    socklen_t len;
+    int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
+    if (connfd == -1) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED && errno != EPROTO) {
+        // HANDLE ERROR, e.g. EMFILE
+      }
+      break;
+    }
+    set_nonblock(connfd);
+
+    muxConn *conn = (muxConn *)calloc(1, sizeof(muxConn)); // ZEROED-OUT
+    conn->in_buf_len = 1024 * 4;
+    conn->in_buf = malloc(conn->in_buf_len);
+    http_parser *parser = (http_parser *)malloc(sizeof(http_parser));
+    http_parser_init(parser, HTTP_REQUEST);
+    parser->data = conn;
+    conn->parser = parser;
+    conn->connfd = connfd;
+    printf("setup parser\n");
+
+    ev_io *client_connection_watcher = malloc(sizeof(ev_io));
+    client_connection_watcher->data = conn;
+    ev_io_init(client_connection_watcher, client_read_cb, connfd, EV_READ);
+    ev_io_start(EV_A_ client_connection_watcher);
+  }
+}
+
+
 int main(int argc, char **argv) {
-  int listenfd;
-  struct sockaddr_in servaddr, cliaddr;
-  socklen_t len = sizeof(cliaddr);
+  int listenfd, optval = 1;
+  struct sockaddr_in servaddr;
 
   memset(&servaddr, 0, sizeof(servaddr));
   listenfd = socket(AF_INET, SOCK_STREAM, 0);
-  int optval = 1;
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
   check_error(listenfd, "listen");
   servaddr.sin_family      = AF_INET;
   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  servaddr.sin_port        = htons(4000); /* daytime server */
+  servaddr.sin_port        = htons(4000);
   check_error(bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)), "bind");
-  check_error(listen(listenfd, 128), "listen");
-  int connfd = accept(listenfd, (struct sockaddr *)&cliaddr, &len);
-  check_error(connfd, "accept");
+  check_error(listen(listenfd, 511), "listen");
+  set_nonblock(listenfd);
 
-  http_parser_settings settings;
-  muxConn *conn = (muxConn *)calloc(1, sizeof(muxConn)); // ZEROED-OUT
   settings.on_header_field = on_header_field;
   settings.on_header_value = on_header_value;
   settings.on_message_complete = on_complete;
   settings.on_headers_complete = on_headers_complete;
   settings.on_path = on_path;
-  http_parser *parser = (http_parser *)malloc(sizeof(http_parser));
-  http_parser_init(parser, HTTP_REQUEST);
-  parser->data = conn;
 
-  conn->connfd = connfd;
-  char buf[1024 * 4];
-  ssize_t recved;
-  ssize_t len_parsed;
+  ev_io new_connection_watcher;
+  new_connection_watcher.data = malloc(sizeof(listenfd));
+  *(int *)new_connection_watcher.data = listenfd;
+  ev_io_init(&new_connection_watcher, listening_socket_cb, listenfd, EV_READ);
+  ev_io_start(EV_DEFAULT_ &new_connection_watcher);
+  ev_run(EV_DEFAULT_ 0);
 
-  while (!conn->reqDone) {
-    recved = recv(connfd, buf, 4 * 1024, 0);
-    len_parsed = http_parser_execute(parser, &settings, buf, recved);
-
-    if (parser->upgrade) {
-      // the +1 is needed since in this case buf[len_parsed] is the \n, BUG??
-      if (recved - len_parsed - 1 == 8) {
-        memcpy(conn->body, buf + len_parsed + 1, recved - len_parsed - 1);
-      } else
-        fprintf(stderr, "invalid body length");
-    } else if (len_parsed != recved)
-      fprintf(stderr, "PARSE ERROR\n");
-  }
-
-  printf("k1: %s\n", conn->keys[0]);
-  printf("k2: %s\n", conn->keys[1]);
-  printf("host: %s\n", conn->host);
-  printf("origin: %s\n", conn->origin);
-
-  if (conn->keys[0] != NULL) {
-    handshake_connection(conn);
-  } else {
-    fprintf(stderr, "could not find keys\n");
-  }
-
-  char t[1]; read(STDIN_FILENO, t, 1);
-  free_mux_conn(conn);
-  free(parser);
-  close(connfd);
   close(listenfd);
-
   return 0;
 }
