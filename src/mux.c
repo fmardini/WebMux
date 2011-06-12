@@ -50,6 +50,8 @@ typedef struct {
   char *in_buf;
   size_t in_buf_len;
   ssize_t in_buf_contents;
+  int websocket_in_frame;
+  int cur_frame_start;
   http_parser *parser;
 } muxConn;
 
@@ -226,7 +228,6 @@ void disconnectAndClean(ev_io *w) {
 }
 
 static void client_read_cb(EV_P_ ev_io *w, int revents) {
-  printf("client sent some data\n");
   muxConn *conn = w->data;
   ssize_t recved;
 
@@ -262,8 +263,26 @@ static void client_read_cb(EV_P_ ev_io *w, int revents) {
       conn->in_buf = realloc(conn->in_buf, new_len);
       conn->in_buf_len = new_len;
     }
-    recved = recv(conn->connfd, conn->in_buf + conn->in_buf_contents, conn->in_buf_len - conn->in_buf_contents, 0);
+    char *p = conn->in_buf + conn->in_buf_contents;
+    recved = recv(conn->connfd, p, conn->in_buf_len - conn->in_buf_contents, 0);
+    if (!conn->websocket_in_frame) {
+      assert(*p == '\0');
+      conn->cur_frame_start = conn->in_buf_contents;
+    }
+    int i;
+    for (i = 0; i < recved; i++, p++) {
+      if (*(unsigned char *)p == 0xFF) { // frame from cur_frame_start to p
+        write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start + 1, p - 1 - (conn->in_buf + conn->cur_frame_start));
+        puts("");
+      } else if (*(unsigned char *)p == 0x00) {
+        conn->cur_frame_start = conn->in_buf_contents;
+      }
+    }
     conn->in_buf_contents += recved;
+    if (conn->in_buf + conn->in_buf_contents == p) {
+      puts("resetting buffer pointer");
+      conn->in_buf_contents = 0;
+    }
   }
 }
 
