@@ -14,6 +14,13 @@
 
 #include "../deps/http-parser/http_parser.h"
 
+
+#define TRY_OR_ERR(STATUS, CALL, ERR)           \
+  do {                                          \
+    STATUS = (CALL)                             \
+    if (STATUS < 0) { (ERR) }                   \
+  } while (0)
+
 int set_nonblock(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags == -1) return -1;
@@ -56,6 +63,7 @@ typedef struct {
 } muxConn;
 
 void free_mux_conn(muxConn *conn) {
+  close(conn->connfd);
   free(conn->req_path);
   int i;
   header p;
@@ -63,6 +71,8 @@ void free_mux_conn(muxConn *conn) {
     p = conn->hs.list[i];
     free(p.field); free(p.value);
   }
+  free(conn->in_buf);
+  free(conn->parser);
   free(conn);
 }
 
@@ -135,7 +145,6 @@ int handshake_connection(muxConn *conn) {
 
 void process_last_header(muxConn *conn) {
   header *last_header = &conn->hs.list[conn->hs.num_headers];
-  printf("HEADER ===> %s : %s\n", last_header->field, last_header->value);
   if (strstr(last_header->field, "Sec-WebSocket-Key")) {
     int idx = *(last_header->field + strlen("Sec-WebSocket-Key")) - '1';
     if (0 <= idx && idx <= 1) { conn->keys[idx] = last_header->value; }
@@ -220,21 +229,33 @@ int on_path(http_parser *parser, const char *at, size_t len) {
 // LIBEV CALLBACKS
 http_parser_settings settings;
 
-void disconnectAndClean(ev_io *w) {
-  ((void) w);
-  // cleanup muxConn and http_parser
-  // close connection
-  // stop w
+void disconnectAndClean(EV_P_ ev_io *w) {
+  puts("conn closed");
+  free_mux_conn(w->data);
+  ev_io_stop(EV_A_ w);
 }
 
 static void client_read_cb(EV_P_ ev_io *w, int revents) {
   muxConn *conn = w->data;
   ssize_t recved;
 
+  // if buffer full reallocate
+  if (conn->in_buf_len == conn->in_buf_contents) {
+    size_t new_len = conn->in_buf_len * 2;
+    conn->in_buf = realloc(conn->in_buf, new_len);
+    conn->in_buf_len = new_len;
+  }
+  char *p = conn->in_buf + conn->in_buf_contents;
+  recved = recv(conn->connfd, p, conn->in_buf_len - conn->in_buf_contents, 0);
+  if (recved == 0) {
+    disconnectAndClean(EV_A_ w);
+    return;
+  }
+
   if (!conn->handshakeDone) {
+    // no need to update in_buf_contents, once parsed data can be discarded
     ssize_t len_parsed;
     http_parser *parser = conn->parser;
-    recved = recv(conn->connfd, conn->in_buf, conn->in_buf_len, 0);
     len_parsed = http_parser_execute(parser, &settings, conn->in_buf, recved);
 
     if (parser->upgrade) {
@@ -243,43 +264,37 @@ static void client_read_cb(EV_P_ ev_io *w, int revents) {
         memcpy(conn->body, conn->in_buf + len_parsed + 1, recved - len_parsed - 1);
       } else {
         fprintf(stderr, "invalid body length");
-        disconnectAndClean(w);
+        disconnectAndClean(EV_A_ w);
       }
     } else if (len_parsed != recved) {
       fprintf(stderr, "PARSE ERROR\n");
-      disconnectAndClean(w);
+      disconnectAndClean(EV_A_ w);
     }
     if (conn->keys[0] != NULL) { // IF ALL IS VALID???
-      printf("handshaking fnat\n");
       handshake_connection(conn);
     } else {
       fprintf(stderr, "invalid client handshake\n");
-      disconnectAndClean(w);
+      disconnectAndClean(EV_A_ w);
     }
   } else { // TODO: implement websockets framing
-    // if buffer full reallocate
-    if (conn->in_buf_len == conn->in_buf_contents) {
-      size_t new_len = conn->in_buf_len * 2;
-      conn->in_buf = realloc(conn->in_buf, new_len);
-      conn->in_buf_len = new_len;
-    }
-    char *p = conn->in_buf + conn->in_buf_contents;
-    recved = recv(conn->connfd, p, conn->in_buf_len - conn->in_buf_contents, 0);
     if (!conn->websocket_in_frame) {
       assert(*p == '\0');
       conn->cur_frame_start = conn->in_buf_contents;
+      conn->websocket_in_frame = 1;
     }
     int i;
-    for (i = 0; i < recved; i++, p++) {
+    for (p++, i = 0; i < recved - 1; i++, p++) { // skip over initial 0x00
       if (*(unsigned char *)p == 0xFF) { // frame from cur_frame_start to p
         write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start + 1, p - 1 - (conn->in_buf + conn->cur_frame_start));
+        conn->websocket_in_frame = 0;
         puts("");
       } else if (*(unsigned char *)p == 0x00) {
         conn->cur_frame_start = conn->in_buf_contents;
+        conn->websocket_in_frame = 1;
       }
     }
     conn->in_buf_contents += recved;
-    if (conn->in_buf + conn->in_buf_contents == p) {
+    if (!conn->websocket_in_frame) {
       puts("resetting buffer pointer");
       conn->in_buf_contents = 0;
     }
@@ -287,7 +302,6 @@ static void client_read_cb(EV_P_ ev_io *w, int revents) {
 }
 
 static void listening_socket_cb(EV_P_ ev_io *w, int revents) {
-  printf("new connection(s) detected\n");
   while (1) {
     struct sockaddr_in addr;
     socklen_t len;
@@ -308,7 +322,6 @@ static void listening_socket_cb(EV_P_ ev_io *w, int revents) {
     parser->data = conn;
     conn->parser = parser;
     conn->connfd = connfd;
-    printf("setup parser\n");
 
     ev_io *client_connection_watcher = malloc(sizeof(ev_io));
     client_connection_watcher->data = conn;
@@ -340,8 +353,7 @@ int main(int argc, char **argv) {
   settings.on_path = on_path;
 
   ev_io new_connection_watcher;
-  new_connection_watcher.data = malloc(sizeof(listenfd));
-  *(int *)new_connection_watcher.data = listenfd;
+  new_connection_watcher.data = &listenfd;
   ev_io_init(&new_connection_watcher, listening_socket_cb, listenfd, EV_READ);
   ev_io_start(EV_DEFAULT_ &new_connection_watcher);
   ev_run(EV_DEFAULT_ 0);
