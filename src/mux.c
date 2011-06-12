@@ -335,6 +335,8 @@ int main(int argc, char **argv) {
   int listenfd, optval = 1;
   struct sockaddr_in servaddr;
 
+  signal(SIGPIPE, SIG_IGN);
+
   memset(&servaddr, 0, sizeof(servaddr));
   listenfd = socket(AF_INET, SOCK_STREAM, 0);
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
