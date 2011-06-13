@@ -14,6 +14,7 @@
 
 #include "../deps/http-parser/http_parser.h"
 
+#include "../deps/hiredis/dict.c"
 
 #define TRY_OR_ERR(STATUS, CALL, ERR)           \
   do {                                          \
@@ -44,7 +45,7 @@ typedef struct {
   int num_headers;
 } headers;
 
-typedef struct {
+typedef struct muxConn {
   int connfd;
   int handshakeDone;
   char body[8];
@@ -61,6 +62,47 @@ typedef struct {
   int cur_frame_start;
   http_parser *parser;
 } muxConn;
+
+// key assumed string -- TODO: what key to use for unidentified connections?
+typedef struct {
+  muxConn *conn;
+  char *outBuf;
+  int outBufLen;
+  int outBufOffset;
+  int outBufToWrite;
+  ev_io *watcher;
+} writeContext;
+
+unsigned int connHash(const void *key) {
+  return dictGenHashFunction(key, strlen(key));
+}
+
+int connComp(void *privdata, const void *key1, const void *key2) {
+  int l1 = strlen(key1), l2 = strlen(key2);
+  return l1 == l2 && memcmp(key1, key2, l1) == 0;
+}
+
+void connKeyDest(void *_, void *key) {
+  free(key);
+}
+void connValDest(void *_, void *val) {
+  // freeing the connection is handled elsewhere
+  free(((writeContext *)val)->outBuf);
+  free(val);
+}
+
+
+// table from connfd to writeContext
+static dictType connectionDict = {
+  /* hashFunction  */ connHash,
+  /* keyDup        */ NULL,
+  /* valDup        */ NULL,
+  /* keyCompare    */ connComp,
+  /* keyDestructor */ connKeyDest,
+  /* valDestructor */ connValDest
+};
+
+static dict * active_connections;
 
 void free_mux_conn(muxConn *conn) {
   close(conn->connfd);
@@ -230,9 +272,26 @@ int on_path(http_parser *parser, const char *at, size_t len) {
 http_parser_settings settings;
 
 void disconnectAndClean(EV_P_ ev_io *w) {
-  puts("conn closed");
   free_mux_conn(w->data);
   ev_io_stop(EV_A_ w);
+}
+
+static void client_write_cb(EV_P_ ev_io *w, int revents) {
+  writeContext *wc = w->data;
+  if (wc->outBufToWrite > 0) {
+    ssize_t n;
+    n = write(wc->conn->connfd, wc->outBuf + wc->outBufOffset, wc->outBufToWrite);
+    if (n < 0) {
+      // TODO: make sure connection has been closed
+      ev_io_stop(EV_A_ w);
+      perror(NULL);
+    }
+    wc->outBufToWrite -= n; wc->outBufOffset += n;
+  }
+  if (wc->outBufToWrite == 0) {
+    wc->outBufOffset = 0;
+    ev_io_stop(EV_A_ w);
+  }
 }
 
 static void client_read_cb(EV_P_ ev_io *w, int revents) {
@@ -287,7 +346,6 @@ static void client_read_cb(EV_P_ ev_io *w, int revents) {
       if (*(unsigned char *)p == 0xFF) { // frame from cur_frame_start to p
         write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start + 1, p - 1 - (conn->in_buf + conn->cur_frame_start));
         conn->websocket_in_frame = 0;
-        puts("");
       } else if (*(unsigned char *)p == 0x00) {
         conn->cur_frame_start = conn->in_buf_contents;
         conn->websocket_in_frame = 1;
@@ -295,7 +353,6 @@ static void client_read_cb(EV_P_ ev_io *w, int revents) {
     }
     conn->in_buf_contents += recved;
     if (!conn->websocket_in_frame) {
-      puts("resetting buffer pointer");
       conn->in_buf_contents = 0;
     }
   }
@@ -327,11 +384,39 @@ static void listening_socket_cb(EV_P_ ev_io *w, int revents) {
     client_connection_watcher->data = conn;
     ev_io_init(client_connection_watcher, client_read_cb, connfd, EV_READ);
     ev_io_start(EV_A_ client_connection_watcher);
+
+    writeContext *wc = malloc(sizeof(writeContext));
+    wc->conn = conn;
+    wc->outBufLen = 1024;
+    wc->outBuf = malloc(wc->outBufLen);
+    wc->outBufToWrite = wc->outBufOffset = 0;
+    char *k = malloc(16);
+    sprintf(k, "%d", connfd);
+    dictAdd(active_connections, k, wc);
+    ev_io *client_write_watcher = malloc(sizeof(ev_io));
+    client_write_watcher->data  = wc;
+    wc->watcher = client_write_watcher;
+    ev_io_init(client_write_watcher, client_write_cb, connfd, EV_WRITE);
   }
 }
 
+static void random_events(EV_P_ ev_timer *w, int revents) {
+  dictEntry *de;
+  dictIterator *iter = dictGetIterator(active_connections);
+  while ((de = dictNext(iter)) != NULL) {
+    writeContext *wc = de->val;
+    // TODO: grow outBuf if needed
+    memcpy(wc->outBuf + wc->outBufOffset, "\x00HOLA AMIGOS\xFF", strlen("HOLA AMIGOS") + 2);
+    wc->outBufToWrite = strlen("HOLA AMIGOS") + 2;
+    if (!ev_is_active(wc->watcher)) {
+      ev_io_start(EV_A_ wc->watcher);
+    }
+  }
+}
 
 int main(int argc, char **argv) {
+  active_connections = dictCreate(&connectionDict, NULL);
+
   int listenfd, optval = 1;
   struct sockaddr_in servaddr;
 
@@ -358,6 +443,11 @@ int main(int argc, char **argv) {
   new_connection_watcher.data = &listenfd;
   ev_io_init(&new_connection_watcher, listening_socket_cb, listenfd, EV_READ);
   ev_io_start(EV_DEFAULT_ &new_connection_watcher);
+
+  ev_timer gen_events;
+  ev_timer_init(&gen_events, random_events, 0, 5);
+  ev_timer_start(EV_DEFAULT_ &gen_events);
+
   ev_run(EV_DEFAULT_ 0);
 
   close(listenfd);
