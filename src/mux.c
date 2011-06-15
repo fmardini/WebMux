@@ -45,16 +45,14 @@ void check_error(int res, char *msg) {
   fprintf(stderr, "Error (%s): %s\n", msg, strerror(errno));
 }
 
-// LIBEV CALLBACKS
 http_parser_settings settings;
-
 
 // JUST FOR TESTING
 static void random_events(EV_P_ ev_timer *w, int revents) {
   dictEntry *de;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    write_to_client(EV_A_ de->val, (unsigned char *)"HOLA AMIGOS", strlen("HOLA AMIGOS"));
+    write_to_client(EV_A_ de->val, 1, (unsigned char *)"HOLA AMIGOS", strlen("HOLA AMIGOS"));
   }
 }
 

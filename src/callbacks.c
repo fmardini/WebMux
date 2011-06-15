@@ -4,11 +4,16 @@ extern http_parser_settings settings;
 extern dict *active_connections;
 
 void client_write_cb(EV_P_ ev_io *w, int revents) {
+  puts("write cb");
+  if (revents & EV_ERROR) { perror(NULL); return; }
   muxConn *mc = w->data;
+  if (!mc->firstWriteEvent) {
+    mc->firstWriteEvent = 1;
+    return;
+  }
   if (mc->outBufToWrite > 0) {
     ssize_t n;
     n = write(mc->connfd, mc->outBuf + mc->outBufOffset, mc->outBufToWrite);
-    printf("%d\n", n);
     if (n < 0) {
       // TODO: make sure connection has been closed
       ev_io_stop(EV_A_ w);
@@ -23,6 +28,8 @@ void client_write_cb(EV_P_ ev_io *w, int revents) {
 }
 
 void client_read_cb(EV_P_ ev_io *w, int revents) {
+  puts("read cb");
+  if (revents & EV_ERROR) { perror(NULL); return; }
   muxConn *conn = w->data;
   ssize_t recved;
 
@@ -57,7 +64,7 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
       fprintf(stderr, "PARSE ERROR\n");
       disconnectAndClean(EV_A_ w);
     }
-    if (conn->keys[0] != NULL) { // IF ALL IS VALID???
+    if (conn->keys[0] != NULL) { // TODO: check IF ALL IS VALID???
       handshake_connection(conn);
     } else {
       fprintf(stderr, "invalid client handshake\n");
@@ -111,6 +118,7 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
     conn->outBuf = malloc(conn->outBufLen);
     conn->outBufToWrite = conn->outBufOffset = 0;
 
+    conn->loop = loop;
     ev_io *client_connection_watcher = malloc(sizeof(ev_io));
     client_connection_watcher->data = conn;
     ev_io_init(client_connection_watcher, client_read_cb, connfd, EV_READ);
@@ -126,16 +134,16 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
   }
 }
 
-void write_to_client(EV_P_ muxConn *mc, unsigned char *msg, size_t msg_len) {
+void write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len) {
   int needed = mc->outBufOffset + mc->outBufToWrite + msg_len;
   // grow output buffer if needed
   if (mc->outBufLen < needed)
     mc->outBuf = realloc(mc->outBuf, needed * 1.2);
   int p = mc->outBufOffset + mc->outBufToWrite;
-  mc->outBuf[p] = '\x00';
-  memcpy(mc->outBuf + p + 1, msg, msg_len);
-  mc->outBuf[p + 1 + msg_len] = '\xFF';
-  mc->outBufToWrite += msg_len + 2;
+  if (add_frame) mc->outBuf[p] = '\x00';
+  memcpy(mc->outBuf + p + (add_frame ? 1 : 0), msg, msg_len); // TODO when add_frame is false, check if need to copy terminating null???
+  if (add_frame) mc->outBuf[p + 1 + msg_len] = '\xFF';
+  mc->outBufToWrite += msg_len + (add_frame ? 2 : 0);
   if (!ev_is_active(mc->watcher)) {
     ev_io_start(EV_A_ mc->watcher);
   }

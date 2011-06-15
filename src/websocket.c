@@ -47,21 +47,6 @@ int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol
   return 0;
 }
 
-void free_mux_conn(muxConn *conn) {
-  close(conn->connfd);
-  free(conn->req_path);
-  int i;
-  header p;
-  for (i = 0; i < conn->hs.num_headers; i++) {
-    p = conn->hs.list[i];
-    free(p.field); free(p.value);
-  }
-  free(conn->in_buf);
-  free(conn->outBuf);
-  free(conn->parser);
-  free(conn);
-}
-
 int handshake_connection(muxConn *conn) {
   unsigned char *cksum = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
   compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum);
@@ -69,7 +54,8 @@ int handshake_connection(muxConn *conn) {
   sprintf(loc, "%s%s", conn->host, conn->req_path);
   char *resp = (char *)malloc(2048 * sizeof(char));
   server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048);
-  write(conn->connfd, resp, strlen(resp));
+  // write(conn->connfd, resp, strlen(resp));
+  write_to_client(conn->loop, conn, 0, resp, strlen(resp));
   free(cksum); free(loc); free(resp);
   return 0;
 }
@@ -151,4 +137,19 @@ int on_path(http_parser *parser, const char *at, size_t len) {
   memcpy(conn->req_path, at, len);
   conn->req_path[len] = '\0';
   return 0;
+}
+
+void free_mux_conn(muxConn *conn) {
+  close(conn->connfd);
+  free(conn->req_path);
+  int i;
+  header p;
+  for (i = 0; i < conn->hs.num_headers; i++) {
+    p = conn->hs.list[i];
+    free(p.field); free(p.value);
+  }
+  free(conn->in_buf);
+  free(conn->outBuf);
+  free(conn->parser);
+  free(conn);
 }

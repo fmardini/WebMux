@@ -29,6 +29,7 @@ typedef struct {
 typedef struct muxConn {
   int connfd;
   headers hs;
+  struct ev_loop *loop;
   char body[8];
   char *req_path;
   char *keys[2]; // points to value in headers list
@@ -42,14 +43,17 @@ typedef struct muxConn {
   int websocket_in_frame;
   int cur_frame_start;
   http_parser *parser;
-  // MERGE writeContext
   ev_io *watcher;
   char *outBuf;
   int outBufLen;
   int outBufOffset;
   int outBufToWrite;
   char *connKey;
+  int firstWriteEvent;
 } muxConn;
+
+// Forward declarations
+void write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len);
 
 int process_key(char *k, unsigned int *res);
 int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out);
