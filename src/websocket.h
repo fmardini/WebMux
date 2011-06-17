@@ -44,12 +44,12 @@ typedef struct muxConn {
   int cur_frame_start;
   http_parser *parser;
   ev_io *watcher;
+  ev_io *read_watcher;
   char *outBuf;
   int outBufLen;
   int outBufOffset;
   int outBufToWrite;
   char *connKey;
-  int firstWriteEvent;
 } muxConn;
 
 // Forward declarations

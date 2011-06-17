@@ -6,10 +6,6 @@ extern dict *active_connections;
 void client_write_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { perror(NULL); return; }
   muxConn *mc = w->data;
-  if (!mc->firstWriteEvent) {
-    mc->firstWriteEvent = 1;
-    return;
-  }
   if (mc->outBufToWrite > 0) {
     ssize_t n;
     n = write(mc->connfd, mc->outBuf + mc->outBufOffset, mc->outBufToWrite);
@@ -118,6 +114,7 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
 
     conn->loop = loop;
     ev_io *client_connection_watcher = malloc(sizeof(ev_io));
+    conn->read_watcher = client_connection_watcher;
     client_connection_watcher->data = conn;
     ev_io_init(client_connection_watcher, client_read_cb, connfd, EV_READ);
     ev_io_start(EV_A_ client_connection_watcher);
@@ -128,6 +125,7 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
     ev_io *client_write_watcher = malloc(sizeof(ev_io));
     client_write_watcher->data  = conn;
     conn->watcher = client_write_watcher;
+    // initialize write watcher but don't start it
     ev_io_init(client_write_watcher, client_write_cb, connfd, EV_WRITE);
   }
 }
@@ -149,9 +147,28 @@ int write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t
   return 0;
 }
 
+// takes the read watcher
 void disconnectAndClean(EV_P_ ev_io *w) {
   muxConn *mc = w->data;
   dictDelete(active_connections, mc->connKey);
   free_mux_conn(mc);
   ev_io_stop(EV_A_ w);
+}
+
+// ignore sigpipe
+void sigpipe_cb(EV_P_ ev_signal *w, int revents) {
+}
+
+void shutdown_server(EV_P_ ev_signal *w, int revents) {
+  dictEntry *de;
+  dictIterator *iter = dictGetIterator(active_connections);
+  while ((de = dictNext(iter)) != NULL) {
+    // write_to_client(EV_A_ de->val, 1, (unsigned char *)"HOLA AMIGOS", strlen("HOLA AMIGOS"));
+    muxConn * mc = de->val;
+    // stop any pending writes
+    ev_io_stop(EV_A_ mc->watcher);
+    disconnectAndClean(EV_A_ mc->read_watcher);
+  }
+  dictReleaseIterator(iter);
+  ev_break(EV_A_ EVBREAK_ALL);
 }

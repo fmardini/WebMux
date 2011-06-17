@@ -50,10 +50,16 @@ http_parser_settings settings;
 // JUST FOR TESTING
 static void random_events(EV_P_ ev_timer *w, int revents) {
   dictEntry *de;
+  int *cnt = w->data;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    write_to_client(EV_A_ de->val, 1, (unsigned char *)"HOLA AMIGOS", strlen("HOLA AMIGOS"));
+    unsigned char buf[32];
+    snprintf(buf, 32, "HOLA AMIGOS %d", *cnt);
+    write_to_client(EV_A_ de->val, 1, buf, strlen(buf));
+    (*cnt)++;
+    if (*cnt == 3) shutdown_server(EV_A_ w, revents);
   }
+  dictReleaseIterator(iter);
 }
 
 int main(int argc, char **argv) {
@@ -61,8 +67,7 @@ int main(int argc, char **argv) {
 
   int listenfd, optval = 1;
   struct sockaddr_in servaddr;
-
-  signal(SIGPIPE, SIG_IGN);
+  ev_default_loop(EVFLAG_SIGNALFD);
 
   memset(&servaddr, 0, sizeof(servaddr));
   listenfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -87,8 +92,17 @@ int main(int argc, char **argv) {
   ev_io_start(EV_DEFAULT_ &new_connection_watcher);
 
   ev_timer gen_events;
+  int timer_counter = 0;
+  gen_events.data = &timer_counter;
   ev_timer_init(&gen_events, random_events, 0, 5);
   ev_timer_start(EV_DEFAULT_ &gen_events);
+
+  ev_signal sigpipe_watcher;
+  ev_signal_init(&sigpipe_watcher, sigpipe_cb, SIGPIPE);
+  ev_signal_start(EV_DEFAULT_ &sigpipe_watcher);
+  ev_signal sigint_watcher;
+  ev_signal_init(&sigint_watcher, shutdown_server, SIGINT);
+  ev_signal_start(EV_DEFAULT_ &sigint_watcher);
 
   ev_run(EV_DEFAULT_ 0);
 
