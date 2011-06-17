@@ -1,0 +1,6 @@
+Web Mux
+=======
+
+A minimalistic client connection multiplexer whereby clients connect and send/receive updates to backend servers using Redis
+
+2011, Fouad Mardini
