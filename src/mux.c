@@ -57,7 +57,6 @@ static void random_events(EV_P_ ev_timer *w, int revents) {
     snprintf(buf, 32, "HOLA AMIGOS %d", *cnt);
     write_to_client(EV_A_ de->val, 1, buf, strlen(buf));
     (*cnt)++;
-    if (*cnt == 3) shutdown_server(EV_A_ w, revents);
   }
   dictReleaseIterator(iter);
 }
