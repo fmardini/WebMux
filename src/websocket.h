@@ -53,7 +53,7 @@ typedef struct muxConn {
 } muxConn;
 
 // Forward declarations
-void write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len);
+int write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len);
 
 int process_key(char *k, unsigned int *res);
 int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out);

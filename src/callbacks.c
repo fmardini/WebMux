@@ -4,7 +4,6 @@ extern http_parser_settings settings;
 extern dict *active_connections;
 
 void client_write_cb(EV_P_ ev_io *w, int revents) {
-  puts("write cb");
   if (revents & EV_ERROR) { perror(NULL); return; }
   muxConn *mc = w->data;
   if (!mc->firstWriteEvent) {
@@ -28,7 +27,6 @@ void client_write_cb(EV_P_ ev_io *w, int revents) {
 }
 
 void client_read_cb(EV_P_ ev_io *w, int revents) {
-  puts("read cb");
   if (revents & EV_ERROR) { perror(NULL); return; }
   muxConn *conn = w->data;
   ssize_t recved;
@@ -134,7 +132,8 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
   }
 }
 
-void write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len) {
+int write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t msg_len) {
+  if (!mc->handshakeDone) return -1;
   int needed = mc->outBufOffset + mc->outBufToWrite + msg_len;
   // grow output buffer if needed
   if (mc->outBufLen < needed)
@@ -147,6 +146,7 @@ void write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_
   if (!ev_is_active(mc->watcher)) {
     ev_io_start(EV_A_ mc->watcher);
   }
+  return 0;
 }
 
 void disconnectAndClean(EV_P_ ev_io *w) {
