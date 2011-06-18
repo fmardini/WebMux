@@ -7,9 +7,9 @@ VPATH=../deps/http-parser
 CC=gcc
 OPTIMIZATION?=-O2
 CFLAGS?=$(OPTIMIZATION) -std=c99 -Wall -W -Wstrict-prototypes -Wwrite-strings -pedantic $(ARCH) $(PROF)
-CCLINK?=-lcrypto -lev
-LIBS?=-I../deps/http-parser
-LDFLAGS?=
+CCLINK?=-lcrypto -lev -lhiredis
+LIBS?=-I../deps/http-parser -I../deps/hiredis
+LDFLAGS?=-L../deps/hiredis
 
 CCOPT= $(CFLAGS) $(CCLINK)
 DEBUG?= -g -ggdb

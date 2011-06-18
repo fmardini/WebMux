@@ -1,5 +1,8 @@
 #include <ctype.h>
 #include <errno.h>
+#include "hiredis.h"
+#include "async.h"
+#include "adapters/libev.h"
 
 #include "websocket.h"
 #include "callbacks.h"
@@ -46,6 +49,7 @@ http_parser_settings settings;
 
 // JUST FOR TESTING
 static void random_events(EV_P_ ev_timer *w, int revents) {
+  return;
   dictEntry *de;
   int *cnt = w->data;
   dictIterator *iter = dictGetIterator(active_connections);
@@ -58,6 +62,17 @@ static void random_events(EV_P_ ev_timer *w, int revents) {
   dictReleaseIterator(iter);
 }
 
+void get_updates(redisAsyncContext *ac, void *_r, void *priv) {
+  // ((void) priv);
+  redisReply *r = _r;
+  assert(r->elements > 2);
+  dictEntry *de;
+  dictIterator *iter = dictGetIterator(active_connections);
+  while ((de = dictNext(iter)) != NULL) {
+    write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 1, r->element[2]->str, r->element[2]->len);
+  }
+  dictReleaseIterator(iter);
+}
 
 int main(int argc, char **argv) {
   active_connections = dictCreate(&connectionDict, NULL);
@@ -99,6 +114,11 @@ int main(int argc, char **argv) {
   ev_signal sigint_watcher;
   ev_signal_init(&sigint_watcher, shutdown_server, SIGINT);
   ev_signal_start(EV_DEFAULT_ &sigint_watcher);
+
+  // Redis stuff
+  redisAsyncContext *pubContext = redisAsyncConnect("127.0.0.1", 6379);
+  redisLibevAttach(EV_DEFAULT_ pubContext);
+  redisAsyncCommand(pubContext, get_updates, NULL, "SUBSCRIBE job_applications");
 
   ev_run(EV_DEFAULT_ 0);
 
