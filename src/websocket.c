@@ -28,32 +28,38 @@ int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
   return 0;
 }
 
+#define CHECK_FIT_ERR(MAX, LAST, PTR, SOFAR) do {   \
+    (PTR) += (LAST);                                \
+    (SOFAR) += (LAST);                              \
+    if ((SOFAR) >= (MAX)) { return -1; }            \
+  } while (0)
+
 int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len) {
   char *p = resp;
   int len = 0, n;
   n = snprintf(p, resp_len - len, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
-  p += n; len += n;
+  CHECK_FIT_ERR(resp_len, n, p, len);
   n = snprintf(p, resp_len - len, "Sec-WebSocket-Origin: %s\r\n", origin);
-  p += n; len += n;
+  CHECK_FIT_ERR(resp_len, n, p, len);
   n = snprintf(p, resp_len - len, "Sec-WebSocket-Location: ws://%s\r\n", loc);
-  p += n; len += n;
+  CHECK_FIT_ERR(resp_len, n, p, len);
   if (protocol != NULL) {
     n = snprintf(p, resp_len - len, "Sec-WebSocket-Protocal: %s\r\n", protocol);
-    p += n; len += n;
+    CHECK_FIT_ERR(resp_len, n, p, len);
   }
   n = snprintf(p, resp_len - len, "\r\n%s", md5);
-  p += n; len += n;
+  CHECK_FIT_ERR(resp_len, n, p, len);
   resp[len] = '\0';
   return 0;
 }
 
 int handshake_connection(muxConn *conn) {
   unsigned char *cksum = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
-  compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum);
+  if (0 != compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum)) { return -1; }
   char *loc = (char *)calloc(1, (strlen(conn->host) + strlen(conn->req_path) + 1) * sizeof(char));
   sprintf(loc, "%s%s", conn->host, conn->req_path);
   char *resp = (char *)malloc(2048 * sizeof(char));
-  server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048);
+  if (0 != server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048)) { return -1; }
   // write(conn->connfd, resp, strlen(resp));
   write_to_client(conn->loop, conn, 0, resp, strlen(resp));
   free(cksum); free(loc); free(resp);

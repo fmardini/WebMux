@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <assert.h>
 #include <errno.h>
 
 #include "../deps/hiredis/dict.c"

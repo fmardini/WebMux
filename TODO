@@ -1,6 +1,7 @@
  * Get rid of compiler warnings
  * Two hash tables one from connfd to muxConn the other from user_id to list of connfds
  * Proper error handling (propagate errors and close connection)
+ * Check return from all *allocs
  * Add testing
  * Active connection sensing: only send updates to the connection from which we are receiving (case of multiple connections)
  * Revisit used hash table library

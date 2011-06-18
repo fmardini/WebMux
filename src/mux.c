@@ -4,10 +4,13 @@
 #include "websocket.h"
 #include "callbacks.h"
 
-#define TRY_OR_ERR(STATUS, CALL, ERR)           \
-  do {                                          \
-    STATUS = (CALL)                             \
-    if (STATUS < 0) { (ERR) }                   \
+#define TRY_OR_EXIT(STATUS, CALL, MSG)       \
+  do {                                       \
+    STATUS = (CALL);                         \
+    if (STATUS < 0) {                        \
+      perror((MSG));                         \
+      exit(1);                               \
+    }                                        \
   } while (0)
 
 unsigned int connHash(const void *key) {
@@ -39,12 +42,6 @@ static dictType connectionDict = {
 };
 
 dict * active_connections;
-
-void check_error(int res, char *msg) {
-  if (res >= 0) return;
-  fprintf(stderr, "Error (%s): %s\n", msg, strerror(errno));
-}
-
 http_parser_settings settings;
 
 // JUST FOR TESTING
@@ -61,22 +58,22 @@ static void random_events(EV_P_ ev_timer *w, int revents) {
   dictReleaseIterator(iter);
 }
 
+
 int main(int argc, char **argv) {
   active_connections = dictCreate(&connectionDict, NULL);
 
-  int listenfd, optval = 1;
+  int listenfd, optval = 1, res;
   struct sockaddr_in servaddr;
   ev_default_loop(EVFLAG_SIGNALFD);
 
   memset(&servaddr, 0, sizeof(servaddr));
-  listenfd = socket(AF_INET, SOCK_STREAM, 0);
+  TRY_OR_EXIT(listenfd, socket(AF_INET, SOCK_STREAM, 0), "socket");
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  check_error(listenfd, "listen");
   servaddr.sin_family      = AF_INET;
   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
   servaddr.sin_port        = htons(4000);
-  check_error(bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)), "bind");
-  check_error(listen(listenfd, 511), "listen");
+  TRY_OR_EXIT(res, bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)), "bind");
+  TRY_OR_EXIT(res, listen(listenfd, 511), "listen");
   set_nonblock(listenfd);
 
   settings.on_header_field = on_header_field;
