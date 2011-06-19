@@ -7,7 +7,7 @@ VPATH=../deps/http-parser
 CC=gcc
 OPTIMIZATION?=-O2
 CFLAGS?=$(OPTIMIZATION) -std=c99 -Wall -W -Wstrict-prototypes -Wwrite-strings -pedantic $(ARCH) $(PROF)
-CCLINK?=-lcrypto -lev -lhiredis
+CCLINK?=-lcrypto -lev
 LIBS?=-I../deps/http-parser -I../deps/hiredis
 LDFLAGS?=-L../deps/hiredis
 
@@ -26,7 +26,7 @@ net_helpers.o: net_helpers.c net_helpers.h
 
 # Binaries:
 mux: $(OBJS)
-	$(CC) -o $@ $(CCOPT) $(DEBUG) $^
+	$(CC) -o $@ $(CCOPT) $(DEBUG) $^ ../deps/hiredis/libhiredis.a 
 
 http_parser.o:http_parser.h http_parser.c
 	$(CC) -c $(LIBS) $(LDFLAGS) $(CFLAGS) $(DEBUG) $<
