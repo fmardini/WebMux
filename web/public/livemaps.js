@@ -22,12 +22,17 @@ var App = function (opts) {
   };
 
   this.connect = function () {
-    var socket = new WebSocket('ws://game.example.com:12010/updates');
-    socket.onopen = function () {};
+    this.socket = new WebSocket('ws://localhost:4000/');
+    this.socket.onopen = function () {};
+    this.socket.onmessage = _.bind(function (ev) {
+      var json = JSON.parse(ev.data);
+      var pos  = new google.maps.LatLng(json.lat, json.long);
+      this.addInfoWindow(pos, json.content);
+    }, this);
   };
 
-  this.addInfoWindow = function (pos) {
-    var iw = new google.maps.InfoWindow({position: pos, content: "<h2>CONTENT</h2>"});
+  this.addInfoWindow = function (pos, cont) {
+    var iw = new google.maps.InfoWindow({position: pos, content: cont});
     this.infoWindows.push(iw);
     iw.open(this.map);
   };
@@ -36,4 +41,5 @@ var App = function (opts) {
 $(document).ready(function () {
   liveMaps = new App({});
   liveMaps.setupMap();
+  liveMaps.connect();
 });
