@@ -117,6 +117,10 @@ int main(int argc, char **argv) {
 
   // Redis stuff
   redisAsyncContext *pubContext = redisAsyncConnect("127.0.0.1", 6379);
+  if (pubContext->err) {
+    fprintf(stderr, "Error %s\n", pubContext->errstr);
+    exit(1);
+  }
   redisLibevAttach(EV_DEFAULT_ pubContext);
   redisAsyncCommand(pubContext, get_updates, NULL, "SUBSCRIBE job_applications");
 
