@@ -74,7 +74,8 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
         conn->websocket_in_frame = 1;
       } else if (*(unsigned char *)p == 0xFF) { // frame from cur_frame_start to p
         // TODO: emit message received
-        write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start + 1, p - 1 - (conn->in_buf + conn->cur_frame_start));
+        int n = write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start + 1, p - 1 - (conn->in_buf + conn->cur_frame_start));
+        if (n < 0) { fprintf(stderr, "write failed\n"); }
         conn->websocket_in_frame = 0;
       }
     }
@@ -87,6 +88,7 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
 }
 
 void listening_socket_cb(EV_P_ ev_io *w, int revents) {
+  if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
     struct sockaddr_in addr;
     socklen_t len;
@@ -156,9 +158,11 @@ void disconnectAndClean(EV_P_ ev_io *w) {
 }
 
 // ignore sigpipe
-void sigpipe_cb(EV_P_ ev_signal *w, int revents) {}
+void sigpipe_cb(EV_P_ ev_signal *w, int revents) { IGNORE_VAR(EV_A); IGNORE_VAR(w); IGNORE_VAR(revents); }
 
 void shutdown_server(EV_P_ ev_signal *w, int revents) {
+  IGNORE_VAR(w); IGNORE_VAR(revents);
+  IGNORE_VAR(dictGenHashFunction); IGNORE_VAR(dictCreate); IGNORE_VAR(dictReplace); IGNORE_VAR(dictRelease);
   dictEntry *de;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
@@ -170,3 +174,5 @@ void shutdown_server(EV_P_ ev_signal *w, int revents) {
   dictReleaseIterator(iter);
   ev_break(EV_A_ EVBREAK_ALL);
 }
+
+

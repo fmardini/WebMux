@@ -1,10 +1,10 @@
 #include <ctype.h>
 #include <errno.h>
+#include <stdlib.h>
 #include "hiredis.h"
 #include "async.h"
 #include "adapters/libev.h"
 
-#include "websocket.h"
 #include "callbacks.h"
 
 #define TRY_OR_EXIT(STATUS, CALL, MSG)       \
@@ -21,14 +21,17 @@ unsigned int connHash(const void *key) {
 }
 
 int connComp(void *privdata, const void *key1, const void *key2) {
+  IGNORE_VAR(privdata);
   int l1 = strlen(key1), l2 = strlen(key2);
   return l1 == l2 && memcmp(key1, key2, l1) == 0;
 }
 
 void connKeyDest(void *_, void *key) {
+  IGNORE_VAR(_);
   free(key);
 }
 void connValDest(void *_, void *val) {
+  IGNORE_VAR(_);
   // freeing the connection is handled elsewhere
   free(((muxConn *)val)->outBuf);
   free(val);
@@ -50,26 +53,27 @@ http_parser_settings settings;
 // JUST FOR TESTING
 static void random_events(EV_P_ ev_timer *w, int revents) {
   return;
+  IGNORE_VAR(revents);
   dictEntry *de;
   int *cnt = w->data;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    unsigned char buf[32];
+    char buf[32];
     snprintf(buf, 32, "HOLA AMIGOS %d", *cnt);
-    write_to_client(EV_A_ de->val, 1, buf, strlen(buf));
+    write_to_client(EV_A_ de->val, 1, (unsigned char *)buf, strlen(buf));
     (*cnt)++;
   }
   dictReleaseIterator(iter);
 }
 
 void get_updates(redisAsyncContext *ac, void *_r, void *priv) {
-  // ((void) priv);
+  IGNORE_VAR(priv);
   redisReply *r = _r;
   assert(r->elements > 2);
   dictEntry *de;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 1, r->element[2]->str, r->element[2]->len);
+    write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 1, (unsigned char *)r->element[2]->str, r->element[2]->len);
   }
   dictReleaseIterator(iter);
 }
@@ -127,5 +131,8 @@ int main(int argc, char **argv) {
   ev_run(EV_DEFAULT_ 0);
 
   close(listenfd);
+  dictRelease(active_connections);
+  IGNORE_VAR(dictReplace); IGNORE_VAR(dictDelete);
+
   return 0;
 }

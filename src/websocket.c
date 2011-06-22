@@ -61,7 +61,7 @@ int handshake_connection(muxConn *conn) {
   char *resp = (char *)malloc(2048 * sizeof(char));
   if (0 != server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048)) { return -1; }
   // write(conn->connfd, resp, strlen(resp));
-  write_to_client(conn->loop, conn, 0, resp, strlen(resp));
+  write_to_client(conn->loop, conn, 0, (unsigned char *)resp, strlen(resp));
   free(cksum); free(loc); free(resp);
   return 0;
 }

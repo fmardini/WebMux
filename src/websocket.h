@@ -39,7 +39,7 @@ typedef struct muxConn {
   char *protocol; // points to value in headers list
   char *in_buf;
   size_t in_buf_len;
-  ssize_t in_buf_contents;
+  size_t in_buf_contents;
   int handshakeDone;
   int websocket_in_frame;
   int cur_frame_start;

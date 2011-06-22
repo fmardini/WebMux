@@ -12,6 +12,8 @@
 
 #include "../deps/hiredis/dict.c"
 
+#define IGNORE_VAR(x) ((void) (x))
+
 void client_write_cb(EV_P_ ev_io *w, int revents);
 void client_read_cb(EV_P_ ev_io *w, int revents);
 void listening_socket_cb(EV_P_ ev_io *w, int revents);
