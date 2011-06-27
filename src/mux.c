@@ -5,16 +5,9 @@
 #include "async.h"
 #include "adapters/libev.h"
 
+#include "common.h"
 #include "callbacks.h"
-
-#define TRY_OR_EXIT(STATUS, CALL, MSG)       \
-  do {                                       \
-    STATUS = (CALL);                         \
-    if (STATUS < 0) {                        \
-      perror((MSG));                         \
-      exit(1);                               \
-    }                                        \
-  } while (0)
+#include "flash_policy.h"
 
 unsigned int connHash(const void *key) {
   return dictGenHashFunction(key, strlen(key));
@@ -100,6 +93,13 @@ int main(int argc, char **argv) {
   settings.on_message_complete = on_complete;
   settings.on_headers_complete = on_headers_complete;
   settings.on_path = on_path;
+
+  int flash_policy_fd = flash_policy_accept_socket();
+  ev_io policy_conn_watcher;
+  policy_conn_watcher.data = malloc(sizeof(flash_policy_fd));
+  memcpy(policy_conn_watcher.data, &flash_policy_fd, sizeof(flash_policy_fd));
+  ev_io_init(&policy_conn_watcher, flash_policy_conn_cb, flash_policy_fd, EV_READ);
+  ev_io_start(EV_DEFAULT_ &policy_conn_watcher);
 
   ev_io new_connection_watcher;
   new_connection_watcher.data = &listenfd;

@@ -1,4 +1,4 @@
-OBJS=callbacks.o net_helpers.o websocket.o mux.o http_parser.o
+OBJS=callbacks.o net_helpers.o websocket.o mux.o http_parser.o flash_policy.o
 BINS=mux
 VPATH=../deps/http-parser
 
@@ -20,13 +20,15 @@ dependencies:
 	@echo MAKE hiredis
 	@cd ../deps/hiredis && $(MAKE)
 
-callbacks.o: callbacks.c callbacks.h websocket.h
-mux.o: mux.c websocket.h  callbacks.h net_helpers.h
-net_helpers.o: net_helpers.c net_helpers.h
+callbacks.o: callbacks.c callbacks.h websocket.h common.h
+mux.o: mux.c websocket.h  callbacks.h net_helpers.h common.h
+net_helpers.o: net_helpers.c net_helpers.h common.h
+flash_policy.o: flash_policy.c flash_policy.h net_helpers.h common.h
+websocket.o: websocket.c websocket.h
 
 # Binaries:
 mux: $(OBJS)
-	$(CC) -o $@ $(CCOPT) $(DEBUG) $^ ../deps/hiredis/libhiredis.a 
+	$(CC) -o $@ $(CCOPT) $(DEBUG) $^ ../deps/hiredis/libhiredis.a
 
 http_parser.o:http_parser.h http_parser.c
 	$(CC) -c $(LIBS) $(LDFLAGS) $(CFLAGS) $(DEBUG) $<
