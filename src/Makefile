@@ -1,4 +1,4 @@
-OBJS=callbacks.o net_helpers.o websocket.o mux.o http_parser.o flash_policy.o
+OBJS=callbacks.o net_helpers.o websocket.o mux.o http_parser.o flash_policy.o flash_protocol.h flash_protocol.o
 BINS=mux
 VPATH=../deps/http-parser
 
@@ -25,6 +25,7 @@ mux.o: mux.c websocket.h  callbacks.h net_helpers.h common.h
 net_helpers.o: net_helpers.c net_helpers.h common.h
 flash_policy.o: flash_policy.c flash_policy.h net_helpers.h common.h
 websocket.o: websocket.c websocket.h
+flash_protocol.o: flash_protocol.c callbacks.h common.h websocket.h net_helpers.h
 
 # Binaries:
 mux: $(OBJS)

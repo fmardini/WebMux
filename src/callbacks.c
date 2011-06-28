@@ -70,7 +70,7 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
     int i;
     for (i = 0; i < recved; i++, p++) {
       if (*(unsigned char *)p == 0x00) {
-        conn->cur_frame_start = conn->in_buf_contents;
+        conn->cur_frame_start = p - conn->in_buf;
         conn->websocket_in_frame = 1;
       } else if (*(unsigned char *)p == 0xFF) { // frame from cur_frame_start to p
         // TODO: emit message received

@@ -1,18 +1,9 @@
 #ifndef _CALLBACKS_H
 #define _CALLBACKS_H
 
+#include "common.h"
 #include "websocket.h"
 #include "net_helpers.h"
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <assert.h>
-#include <errno.h>
-
-#include "../deps/hiredis/dict.c"
-
-#define IGNORE_VAR(x) ((void) (x))
 
 void client_write_cb(EV_P_ ev_io *w, int revents);
 void client_read_cb(EV_P_ ev_io *w, int revents);

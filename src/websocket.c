@@ -156,7 +156,7 @@ void free_mux_conn(muxConn *conn) {
   }
   free(conn->in_buf);
   free(conn->outBuf);
-  free(conn->parser);
+  if (conn->parser != NULL) free(conn->parser);
   free(conn->watcher);
   free(conn->read_watcher);
   free(conn);

@@ -1,13 +1,11 @@
-#include <ctype.h>
-#include <errno.h>
-#include <stdlib.h>
+#include "common.h"
 #include "hiredis.h"
 #include "async.h"
 #include "adapters/libev.h"
 
-#include "common.h"
 #include "callbacks.h"
 #include "flash_policy.h"
+#include "flash_protocol.h"
 
 unsigned int connHash(const void *key) {
   return dictGenHashFunction(key, strlen(key));
@@ -66,7 +64,12 @@ void get_updates(redisAsyncContext *ac, void *_r, void *priv) {
   dictEntry *de;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 1, (unsigned char *)r->element[2]->str, r->element[2]->len);
+    // websockets
+    // write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 1, (unsigned char *)r->element[2]->str, r->element[2]->len);
+    // flash
+    realloc(r->element[2]->str, r->element[2]->len + 2);
+    memcpy(r->element[2]->str + r->element[2]->len, "\r\n", 2);
+    write_to_client(((redisLibevEvents *)ac->ev.data)->loop, de->val, 0, (unsigned char *)r->element[2]->str, r->element[2]->len + 2);
   }
   dictReleaseIterator(iter);
 }
@@ -100,6 +103,13 @@ int main(int argc, char **argv) {
   memcpy(policy_conn_watcher.data, &flash_policy_fd, sizeof(flash_policy_fd));
   ev_io_init(&policy_conn_watcher, flash_policy_conn_cb, flash_policy_fd, EV_READ);
   ev_io_start(EV_DEFAULT_ &policy_conn_watcher);
+
+  int flash_protocol_fd = flash_protocol_socket_fd();
+  ev_io flash_protocol_watcher;
+  flash_protocol_watcher.data = malloc(sizeof(flash_protocol_fd));
+  memcpy(flash_protocol_watcher.data, &flash_protocol_fd, sizeof(flash_protocol_fd));
+  ev_io_init(&flash_protocol_watcher, flash_protocol_conn_cb, flash_protocol_fd, EV_READ);
+  ev_io_start(EV_DEFAULT_ &flash_protocol_watcher);
 
   ev_io new_connection_watcher;
   new_connection_watcher.data = &listenfd;
