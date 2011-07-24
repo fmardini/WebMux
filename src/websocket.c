@@ -60,7 +60,6 @@ int handshake_connection(muxConn *conn) {
   sprintf(loc, "%s%s", conn->host, conn->req_path);
   char *resp = (char *)malloc(2048 * sizeof(char));
   if (0 != server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048)) { return -1; }
-  // write(conn->connfd, resp, strlen(resp));
   write_to_client(conn->loop, conn, 0, (unsigned char *)resp, strlen(resp));
   free(cksum); free(loc); free(resp);
   return 0;
@@ -80,7 +79,7 @@ void process_last_header(muxConn *conn) {
   }
 }
 
-int on_header_field (http_parser *parser, const char *at, size_t len) {
+int on_header_field(http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
   if (conn->hs.last_was_value) {
     // last_header points to a complete header, do any processing
@@ -108,7 +107,7 @@ int on_header_field (http_parser *parser, const char *at, size_t len) {
   return 0;
 }
 
-int on_header_value (http_parser *parser, const char *at, size_t len) {
+int on_header_value(http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
   if (!conn->hs.last_was_value) {
     CURRENT_LINE(conn)->value_len = len;
@@ -147,18 +146,20 @@ int on_path(http_parser *parser, const char *at, size_t len) {
 
 void free_mux_conn(muxConn *conn) {
   close(conn->connfd);
-  free(conn->req_path);
-  int i;
+  if (conn->user_id != NULL) free(conn->user_id);
+  ev_io_stop(conn->loop, conn->watcher); ev_io_stop(conn->loop, conn->read_watcher);
+  free(conn->watcher); free(conn->read_watcher);
+  if (conn->updates_watcher != NULL) {
+    ev_timer_stop(conn->loop, conn->updates_watcher); free(conn->updates_watcher);
+  }
+  if (conn->parser != NULL) free(conn->parser);
   header p;
-  for (i = 0; i < conn->hs.num_headers; i++) {
+  for (int i = 0; i < conn->hs.num_headers; i++) {
     p = conn->hs.list[i];
     free(p.field); free(p.value);
   }
+  if (conn->req_path != NULL) { free(conn->req_path); }
   free(conn->in_buf);
   free(conn->outBuf);
-  if (conn->parser != NULL) free(conn->parser);
-  free(conn->watcher);
-  free(conn->read_watcher);
   free(conn);
 }
-

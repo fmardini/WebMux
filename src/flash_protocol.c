@@ -24,9 +24,9 @@ void flash_protocol_read_cb(EV_P_ ev_io *w, int revents) {
   int i;
   for (i = 0; i < recved; i++, p++) {
     if (*p == '\n') { // TODO: line terminated by \r\n
-      int n = write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start, p - 2 - (conn->in_buf + conn->cur_frame_start)); // last two bytes are \r\n
-      if (n < 0) { fprintf(stderr, "write failed\n"); }
-      conn->cur_frame_start = (p - conn->in_buf) + 1; // next byte is new line
+      int n = write(STDOUT_FILENO, conn->in_buf + conn->cur_frame_start, p - 1 - (conn->in_buf + conn->cur_frame_start)); // last two bytes are \r\n
+      if (n < 0) { perror("ERROR WRITING?"); }
+      conn->cur_frame_start = (p - conn->in_buf) + 1; // next byte is the start of the new line
     }
   }
   if (*(p - 1) == '\n') {
@@ -35,15 +35,15 @@ void flash_protocol_read_cb(EV_P_ ev_io *w, int revents) {
   } else {
     conn->in_buf_contents += recved;
   }
-
 }
 
 void flash_protocol_conn_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
-    struct sockaddr_in addr;
-    socklen_t len;
-    int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
+    struct sockaddr_in addr = { 0 };
+    socklen_t len = sizeof(struct sockaddr_in);
+    accept_watcher_data *awd = w->data;
+    int connfd = accept(awd->accept_fd, (struct sockaddr *)&addr, &len);
     if (connfd == -1) {
       if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED && errno != EPROTO) {
         // HANDLE ERROR, e.g. EMFILE
@@ -52,7 +52,8 @@ void flash_protocol_conn_cb(EV_P_ ev_io *w, int revents) {
     }
     set_nonblock(connfd);
 
-    muxConn *conn = (muxConn *)calloc(1, sizeof(muxConn)); // ZEROED-OUT
+    muxConn *conn = calloc(1, sizeof(muxConn)); // ZEROED-OUT
+    conn->conn_id = ++(awd->uniq_id);
     conn->in_buf_len = 1024 * 4;
     conn->in_buf = malloc(conn->in_buf_len);
     conn->connfd = connfd;
@@ -68,9 +69,7 @@ void flash_protocol_conn_cb(EV_P_ ev_io *w, int revents) {
     ev_io_init(client_connection_watcher, flash_protocol_read_cb, connfd, EV_READ);
     ev_io_start(EV_A_ client_connection_watcher);
 
-    conn->connKey = malloc(16);
-    sprintf(conn->connKey, "%d", connfd);
-    dictAdd(active_connections, conn->connKey, conn);
+    dictAdd(active_connections, connfd, conn);
     ev_io *client_write_watcher = malloc(sizeof(ev_io));
     client_write_watcher->data  = conn;
     conn->watcher = client_write_watcher;
@@ -94,3 +93,22 @@ int flash_protocol_socket_fd(void) {
   set_nonblock(listenfd);
   return listenfd;
 }
+
+static void connectCallback(const redisAsyncContext *c, int status) {
+  if (status != REDIS_OK) {
+    printf("Error: %s\n", c->errstr);
+    perror("FNAT");
+    exit(1);
+  }
+}
+
+void uq_redis_connect(EV_P) {
+  pubContext = redisAsyncConnect("127.0.0.1", 6379);
+  if (pubContext->err) {
+    fprintf(stderr, "Redis Error %s\n", pubContext->errstr);
+    exit(1);
+  }
+  redisLibevAttach(EV_A_ pubContext);
+  redisAsyncSetConnectCallback(pubContext, connectCallback);
+}
+

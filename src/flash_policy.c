@@ -3,8 +3,8 @@
 void flash_policy_conn_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
-    struct sockaddr_in addr;
-    socklen_t len;
+    struct sockaddr_in addr = { 0 };
+    socklen_t len = sizeof(struct sockaddr_in);
     int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
     if (connfd == -1) {
       if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED && errno != EPROTO) {

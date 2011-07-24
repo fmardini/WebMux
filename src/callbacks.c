@@ -17,6 +17,7 @@ void client_write_cb(EV_P_ ev_io *w, int revents) {
     mc->outBufToWrite -= n; mc->outBufOffset += n;
   }
   if (mc->outBufToWrite == 0) {
+    // TODO: shrink buffer if too big
     mc->outBufOffset = 0;
     ev_io_stop(EV_A_ w);
   }
@@ -90,8 +91,8 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
 void listening_socket_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
-    struct sockaddr_in addr;
-    socklen_t len;
+    struct sockaddr_in addr = { 0 };
+    socklen_t len = sizeof(struct sockaddr_in);
     int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
     if (connfd == -1) {
       if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ECONNABORTED && errno != EPROTO) {
@@ -120,9 +121,7 @@ void listening_socket_cb(EV_P_ ev_io *w, int revents) {
     ev_io_init(client_connection_watcher, client_read_cb, connfd, EV_READ);
     ev_io_start(EV_A_ client_connection_watcher);
 
-    conn->connKey = malloc(16);
-    sprintf(conn->connKey, "%d", connfd);
-    dictAdd(active_connections, conn->connKey, conn);
+    dictAdd(active_connections, connfd, conn);
     ev_io *client_write_watcher = malloc(sizeof(ev_io));
     client_write_watcher->data  = conn;
     conn->watcher = client_write_watcher;
@@ -152,9 +151,8 @@ int write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t
 // takes the read watcher
 void disconnectAndClean(EV_P_ ev_io *w) {
   muxConn *mc = w->data;
-  dictDelete(active_connections, mc->connKey);
+  if (DICT_ERR == dictDelete(active_connections, mc->connfd)) { fprintf(stderr, "(BUG) CONNECTION ALREADY REMOVED FROM HASH"); }
   free_mux_conn(mc);
-  ev_io_stop(EV_A_ w);
 }
 
 // ignore sigpipe
