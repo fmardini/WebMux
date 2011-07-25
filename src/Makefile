@@ -11,7 +11,7 @@ CC=gcc
 LDFLAGS?=-L../deps/hiredis
 # OPTIMIZATION?=-O2
 OPTIMIZATION?=
-CFLAGS?=$(OPTIMIZATION) -std=c99 -Wall -W -Wstrict-prototypes -Wwrite-strings -pedantic
+CFLAGS?=$(OPTIMIZATION) -std=c99 -Wall -W -Wstrict-prototypes -Wwrite-strings
 CCLINK?=-lcrypto -lev
 LIBS?=-I../deps/http-parser -I../deps/hiredis
 CCOPT= $(CFLAGS) $(CCLINK)

@@ -49,9 +49,8 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
     len_parsed = http_parser_execute(parser, &settings, conn->in_buf, recved);
 
     if (parser->upgrade) {
-      // the +1 is needed since in this case conn->in_buf[len_parsed] is the \n, BUG??
-      if (recved - len_parsed - 1 == 8) {
-        memcpy(conn->body, conn->in_buf + len_parsed + 1, recved - len_parsed - 1);
+      if (recved - len_parsed == 8) {
+        memcpy(conn->body, conn->in_buf + len_parsed, 8);
       } else {
         fprintf(stderr, "INVALID WEBSOKCET HANDSHAKE BODY LENGTH\n");
         disconnectAndClean(EV_A_ w);
@@ -62,7 +61,7 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
       disconnectAndClean(EV_A_ w);
       return;
     }
-    if (handshake_connection(conn) != 0) { // TODO: check IF ALL IS VALID???
+    if (handshake_connection(conn) != 0) {
       fprintf(stderr, "INVALID CLIENT HANDSHAKE\n");
       disconnectAndClean(EV_A_ w);
       return;
@@ -91,7 +90,7 @@ void client_read_cb(EV_P_ ev_io *w, int revents) {
 void listening_socket_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
-    struct sockaddr_in addr = { 0 };
+    struct sockaddr_in addr;
     socklen_t len = sizeof(struct sockaddr_in);
     int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
     if (connfd == -1) {
@@ -150,6 +149,7 @@ int write_to_client(EV_P_ muxConn *mc, int add_frame, unsigned char *msg, size_t
 
 // takes the read watcher
 void disconnectAndClean(EV_P_ ev_io *w) {
+  IGNORE_VAR(loop);
   muxConn *mc = w->data;
   if (DICT_ERR == dictDelete(active_connections, mc->connfd)) { fprintf(stderr, "(BUG) CONNECTION ALREADY REMOVED FROM HASH"); }
   free_mux_conn(mc);
@@ -172,5 +172,4 @@ void shutdown_server(EV_P_ ev_signal *w, int revents) {
   dictReleaseIterator(iter);
   ev_break(EV_A_ EVBREAK_ALL);
 }
-
 

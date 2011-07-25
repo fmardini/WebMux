@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
   settings.on_header_value = on_header_value;
   settings.on_message_complete = on_complete;
   settings.on_headers_complete = on_headers_complete;
-  settings.on_path = on_path;
+  settings.on_url = on_path;
 
   int flash_policy_fd = flash_policy_accept_socket();
   ev_io policy_conn_watcher;

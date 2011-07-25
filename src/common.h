@@ -83,4 +83,6 @@ typedef struct muxConn {
 
 dict *active_connections;
 
+#define LOG(m1,m2) fprintf(stdout, "%s: %s\n", m1, m2);
+
 #endif

@@ -37,7 +37,7 @@ int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
 int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len) {
   char *p = resp;
   int len = 0, n;
-  n = snprintf(p, resp_len - len, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
+  n = snprintf(p, resp_len - len, "HTTP/1.1 101 WebSocket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
   CHECK_FIT_ERR(resp_len, n, p, len);
   n = snprintf(p, resp_len - len, "Sec-WebSocket-Origin: %s\r\n", origin);
   CHECK_FIT_ERR(resp_len, n, p, len);
