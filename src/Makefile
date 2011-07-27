@@ -45,3 +45,6 @@ love:
 clean:
 	rm -rf $(BINS) *.o *.dSYM
 
+check-syntax:
+	gcc -o /dev/null -D$(DEFINE) $(LIBS) $(CFLAGS) -S ${CHK_SOURCES}
+

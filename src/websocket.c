@@ -79,8 +79,6 @@ void ws_free_data(muxConn *mc) {
 
 void ws_write_out(muxConn *mc, char *msg, int msg_len) {
   ws_transport_data *data = mc->transport_data;
-  // should not attempt to write to the client before it sends the handshake
-  if (!data->handshakeDone) { return; }
   int needed = mc->outBufOffset + mc->outBufToWrite + msg_len;
   // grow output buffer if needed
   if (mc->outBufLen < needed) { mc->outBuf = realloc(mc->outBuf, needed * 1.2); }
