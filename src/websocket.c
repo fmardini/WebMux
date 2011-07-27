@@ -1,6 +1,109 @@
 #include "websocket.h"
 
-int process_key(char *k, unsigned int *res) {
+extern http_parser_settings settings;
+
+void ws_initialize(transport *xprt) {
+  settings.on_header_field     = on_header_field;
+  settings.on_header_value     = on_header_value;
+  settings.on_headers_complete = on_headers_complete;
+  settings.on_url              = on_url;
+}
+
+void ws_read_cb(muxConn *mc, ssize_t recved) {
+  ws_transport_data *data = mc->transport_data;
+
+  if (!data->handshakeDone) {
+    // no need to update in_buf_contents, once parsed data can be discarded
+    ssize_t len_parsed;
+    http_parser *parser = data->parser;
+    len_parsed = http_parser_execute(parser, &settings, mc->in_buf, recved);
+
+    if (parser->upgrade) {
+      if (recved - len_parsed == 8) {
+        memcpy(data->body, mc->in_buf + len_parsed, 8);
+      } else {
+        perror("INVALID WEBSOKCET HANDSHAKE BODY LENGTH");
+        disconnectAndClean(mc);
+        return;
+      }
+    } else if (len_parsed != recved) {
+      perror("WEBSOCKET HANDSHAKE PARSE ERROR");
+      disconnectAndClean(mc);
+      return;
+    }
+    if (handshake_connection(mc) != 0) {
+      perror("INVALID CLIENT HANDSHAKE\n");
+      disconnectAndClean(mc);
+      return;
+    }
+  } else {
+    char *p = mc->in_buf + mc->in_buf_contents;
+    for (int i = 0; i < recved; i++, p++) {
+      if (*(unsigned char *)p == 0x00) {
+        data->cur_frame_start = p - mc->in_buf;
+        data->websocket_in_frame = 1;
+      } else if (*(unsigned char *)p == 0xFF) {
+        mc->xprt->xprt_recv_msg(mc, mc->in_buf + data->cur_frame_start + 1, p - 1 - (mc->in_buf + data->cur_frame_start));
+        data->websocket_in_frame = 0;
+      }
+    }
+    if (!data->websocket_in_frame) {
+      mc->in_buf_contents = 0;
+    } else {
+      mc->in_buf_contents += recved;
+    }
+  }
+}
+
+void ws_conn_cb(muxConn *mc) {
+  ws_transport_data *data = calloc(1, sizeof(ws_transport_data));
+  http_parser *parser = malloc(sizeof(http_parser));
+  http_parser_init(parser, HTTP_REQUEST);
+  parser->data = mc;
+  data->parser = parser;
+  mc->transport_data = data;
+}
+
+void ws_free_data(muxConn *mc) {
+  ws_transport_data *data = mc->transport_data;
+  free(data->parser);
+  header p;
+  for (int i = 0; i < data->hs.num_headers; i++) {
+    p = data->hs.list[i];
+    free(p.field); free(p.value);
+  }
+  if (data->req_path != NULL) { free(data->req_path); }
+  free(data);
+}
+
+void ws_write_out(muxConn *mc, char *msg, int msg_len) {
+  ws_transport_data *data = mc->transport_data;
+  // should not attempt to write to the client before it sends the handshake
+  if (!data->handshakeDone) { return; }
+  int needed = mc->outBufOffset + mc->outBufToWrite + msg_len;
+  // grow output buffer if needed
+  if (mc->outBufLen < needed) { mc->outBuf = realloc(mc->outBuf, needed * 1.2); }
+  int p = mc->outBufOffset + mc->outBufToWrite;
+  int add_frame = data->handshakeDone;
+  if (add_frame) mc->outBuf[p] = '\x00';
+  memcpy(mc->outBuf + p + (add_frame ? 1 : 0), msg, msg_len);
+  if (add_frame) mc->outBuf[p + 1 + msg_len] = '\xFF';
+  mc->outBufToWrite += msg_len + (add_frame ? 2 : 0);
+  if (!ev_is_active(mc->watcher)) {
+# if EV_MULTIPLICITY
+    ev_io_start(mc->loop, mc->watcher);
+# else
+    ev_io_start(mc->watcher);
+# endif
+  }
+  return 0;
+}
+
+void ws_recv_msg(muxConn *mc, char *msg, int msg_len) {
+  write(STDOUT_FILENO, msg, msg_len);
+}
+
+static int process_key(char *k, unsigned int *res) {
   int j = 0, sp = 0;
   char digits[32];
   for (; *k; k++) {
@@ -13,7 +116,7 @@ int process_key(char *k, unsigned int *res) {
   return 0;
 }
 
-int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
+static int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
   unsigned int k1, k2;
   if (process_key(f1, &k1) == -1 || process_key(f2, &k2) == -1) { return -1; }
   k1 = htonl(k1); k2 = htonl(k2);
@@ -28,13 +131,13 @@ int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out) {
   return 0;
 }
 
-#define CHECK_FIT_ERR(MAX, LAST, PTR, SOFAR) do {   \
-    (PTR) += (LAST);                                \
-    (SOFAR) += (LAST);                              \
-    if ((SOFAR) >= (MAX)) { return -1; }            \
+#define CHECK_FIT_ERR(MAX, LAST, PTR, SOFAR) do {       \
+    (PTR) += (LAST);                                    \
+    (SOFAR) += (LAST);                                  \
+    if ((SOFAR) >= (MAX)) { return -1; }                \
   } while (0)
 
-int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len) {
+static int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len) {
   char *p = resp;
   int len = 0, n;
   n = snprintf(p, resp_len - len, "HTTP/1.1 101 WebSocket Protocol Handshake\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\n");
@@ -53,113 +156,96 @@ int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol
   return 0;
 }
 
-int handshake_connection(muxConn *conn) {
+static int handshake_connection(muxConn *conn) {
   unsigned char *cksum = (unsigned char *)calloc(1, 17 * sizeof(char)); // 16 + NULL
-  if (0 != compute_checksum(conn->keys[0], conn->keys[1], conn->body, cksum)) { return -1; }
-  char *loc = (char *)calloc(1, (strlen(conn->host) + strlen(conn->req_path) + 1) * sizeof(char));
-  sprintf(loc, "%s%s", conn->host, conn->req_path);
+  ws_transport_data *data = conn->transport_data;
+  if (0 != compute_checksum(data->keys[0], data->keys[1], data->body, cksum)) { return -1; }
+  char *loc = (char *)calloc(1, (strlen(data->host) + strlen(data->req_path) + 1) * sizeof(char));
+  sprintf(loc, "%s%s", data->host, data->req_path);
   char *resp = (char *)malloc(2048 * sizeof(char));
-  if (0 != server_handshake(cksum, conn->origin, loc, conn->protocol, resp, 2048)) { return -1; }
-  write_to_client(conn->loop, conn, 0, (unsigned char *)resp, strlen(resp));
+  if (0 != server_handshake(cksum, data->origin, loc, data->protocol, resp, 2048)) { return -1; }
+  ws_write_out(conn, resp, strlen(resp));
+  data->handshakeDone = 1;
   free(cksum); free(loc); free(resp);
   return 0;
 }
 
-void process_last_header(muxConn *conn) {
-  header *last_header = &conn->hs.list[conn->hs.num_headers];
+static void process_last_header(muxConn *conn) {
+  ws_transport_data *data = conn->transport_data;
+  header *last_header = &data->hs.list[data->hs.num_headers];
   if (strstr(last_header->field, "Sec-WebSocket-Key")) {
     int idx = *(last_header->field + strlen("Sec-WebSocket-Key")) - '1';
-    if (0 <= idx && idx <= 1) { conn->keys[idx] = last_header->value; }
+    if (0 <= idx && idx <= 1) { data->keys[idx] = last_header->value; }
   } else if (strstr(last_header->field, "Origin")) {
-    conn->origin = last_header->value;
+    data->origin = last_header->value;
   } else if (strstr(last_header->field, "Host")) {
-    conn->host = last_header->value;
+    data->host = last_header->value;
   } else if (strstr(last_header->field, "Sec-WebSocket-Protocol")) {
-    conn->protocol = last_header->value;
+    data->protocol = last_header->value;
   }
 }
 
-int on_header_field(http_parser *parser, const char *at, size_t len) {
+static int on_header_field(http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
-  if (conn->hs.last_was_value) {
+  ws_transport_data *data = conn->transport_data;
+  if (data->hs.last_was_value) {
     // last_header points to a complete header, do any processing
     process_last_header(conn);
 
-    conn->hs.num_headers++;
+    data->hs.num_headers++;
 
-    CURRENT_LINE(conn)->value = NULL;
-    CURRENT_LINE(conn)->value_len = 0;
+    CURRENT_LINE(data)->value = NULL;
+    CURRENT_LINE(data)->value_len = 0;
 
-    CURRENT_LINE(conn)->field_len = len;
-    CURRENT_LINE(conn)->field = malloc(len+1);
-    strncpy(CURRENT_LINE(conn)->field, at, len);
+    CURRENT_LINE(data)->field_len = len;
+    CURRENT_LINE(data)->field = malloc(len+1);
+    strncpy(CURRENT_LINE(data)->field, at, len);
   } else {
-    assert(CURRENT_LINE(conn)->value == NULL);
-    assert(CURRENT_LINE(conn)->value_len == 0);
+    assert(CURRENT_LINE(data)->value == NULL);
+    assert(CURRENT_LINE(data)->value_len == 0);
 
-    CURRENT_LINE(conn)->field_len += len;
-    CURRENT_LINE(conn)->field = realloc(CURRENT_LINE(conn)->field, CURRENT_LINE(conn)->field_len + 1);
-    strncat(CURRENT_LINE(conn)->field, at, len);
+    CURRENT_LINE(data)->field_len += len;
+    CURRENT_LINE(data)->field = realloc(CURRENT_LINE(data)->field, CURRENT_LINE(data)->field_len + 1);
+    strncat(CURRENT_LINE(data)->field, at, len);
   }
 
-  CURRENT_LINE(conn)->field[CURRENT_LINE(conn)->field_len] = '\0';
-  conn->hs.last_was_value = 0;
+  CURRENT_LINE(data)->field[CURRENT_LINE(data)->field_len] = '\0';
+  data->hs.last_was_value = 0;
   return 0;
 }
 
 int on_header_value(http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
-  if (!conn->hs.last_was_value) {
-    CURRENT_LINE(conn)->value_len = len;
-    CURRENT_LINE(conn)->value = malloc(len+1);
-    strncpy(CURRENT_LINE(conn)->value, at, len);
+  ws_transport_data *data = conn->transport_data;
+  if (!data->hs.last_was_value) {
+    CURRENT_LINE(data)->value_len = len;
+    CURRENT_LINE(data)->value = malloc(len+1);
+    strncpy(CURRENT_LINE(data)->value, at, len);
   } else {
-    CURRENT_LINE(conn)->value_len += len;
-    CURRENT_LINE(conn)->value = realloc(CURRENT_LINE(conn)->value, CURRENT_LINE(conn)->value_len + 1);
-    strncat(CURRENT_LINE(conn)->value, at, len);
+    CURRENT_LINE(data)->value_len += len;
+    CURRENT_LINE(data)->value = realloc(CURRENT_LINE(data)->value, CURRENT_LINE(data)->value_len + 1);
+    strncat(CURRENT_LINE(data)->value, at, len);
   }
 
-  CURRENT_LINE(conn)->value[CURRENT_LINE(conn)->value_len] = '\0';
-  conn->hs.last_was_value = 1;
+  CURRENT_LINE(data)->value[CURRENT_LINE(data)->value_len] = '\0';
+  data->hs.last_was_value = 1;
   return 0;
 }
 
 int on_headers_complete(http_parser *parser) {
   muxConn *conn = (muxConn *)parser->data;
+  ws_transport_data *data = conn->transport_data;
   process_last_header(conn);
-  conn->hs.num_headers++;
+  data->hs.num_headers++;
   return 0;
 }
 
-int on_complete(http_parser *parser) {
-  ((muxConn *)parser->data)->handshakeDone = 1;
-  return 0;
-}
-
-int on_path(http_parser *parser, const char *at, size_t len) {
+int on_url(http_parser *parser, const char *at, size_t len) {
   muxConn *conn = (muxConn *)parser->data;
-  conn->req_path = (char *)malloc(sizeof(char) * (len + 1));
-  memcpy(conn->req_path, at, len);
-  conn->req_path[len] = '\0';
+  ws_transport_data *data = conn->transport_data;
+  data->req_path = (char *)malloc(sizeof(char) * (len + 1));
+  memcpy(data->req_path, at, len);
+  data->req_path[len] = '\0';
   return 0;
 }
 
-void free_mux_conn(muxConn *conn) {
-  close(conn->connfd);
-  if (conn->user_id != NULL) free(conn->user_id);
-  ev_io_stop(conn->loop, conn->watcher); ev_io_stop(conn->loop, conn->read_watcher);
-  free(conn->watcher); free(conn->read_watcher);
-  if (conn->updates_watcher != NULL) {
-    ev_timer_stop(conn->loop, conn->updates_watcher); free(conn->updates_watcher);
-  }
-  if (conn->parser != NULL) free(conn->parser);
-  header p;
-  for (int i = 0; i < conn->hs.num_headers; i++) {
-    p = conn->hs.list[i];
-    free(p.field); free(p.value);
-  }
-  if (conn->req_path != NULL) { free(conn->req_path); }
-  free(conn->in_buf);
-  free(conn->outBuf);
-  free(conn);
-}

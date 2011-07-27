@@ -1,9 +1,9 @@
 #include "flash_policy.h"
 
-void flash_policy_conn_cb(EV_P_ ev_io *w, int revents) {
+static void flash_policy_conn_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { ev_break(EV_A_ EVBREAK_ALL); return; }
   while (1) {
-    struct sockaddr_in addr = { 0 };
+    struct sockaddr_in addr;
     socklen_t len = sizeof(struct sockaddr_in);
     int connfd = accept(*(int *)w->data, (struct sockaddr *)&addr, &len);
     if (connfd == -1) {
@@ -22,13 +22,13 @@ void flash_policy_conn_cb(EV_P_ ev_io *w, int revents) {
   }
 }
 
-void flash_policy_write_cb(EV_P_ ev_io *w, int revents) {
+static void flash_policy_write_cb(EV_P_ ev_io *w, int revents) {
   if (revents & EV_ERROR) { goto scamper; }
   ssize_t n;
   n = write(*(int *)w->data, FLASH_POLICY_STRING, strlen(FLASH_POLICY_STRING));
-  if (n != strlen(FLASH_POLICY_STRING)) { fprintf(stderr, "%s\n", strerror(errno)); }
+  if (n != strlen(FLASH_POLICY_STRING)) { perror("COULDNT WRITE FLASH POLICY"); }
  scamper:
-  // ALWAYS close the connection after write regardless of whether the it succeeded
+  // ALWAYS close the connection after writing regardless of whether the it succeeded
   if (close(*(int *)w->data) == -1) {
     perror("ERROR WRITING TO CLIENT");
   }
@@ -37,18 +37,12 @@ void flash_policy_write_cb(EV_P_ ev_io *w, int revents) {
   free(w);
 }
 
-int flash_policy_accept_socket(void) {
-  int listenfd, optval = 1, res;
-  struct sockaddr_in servaddr;
-
-  memset(&servaddr, 0, sizeof(servaddr));
-  TRY_OR_EXIT(listenfd, socket(AF_INET, SOCK_STREAM, 0), "socket");
-  setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  servaddr.sin_family      = AF_INET;
-  servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  servaddr.sin_port        = htons(843);
-  TRY_OR_EXIT(res, bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)), "bind");
-  TRY_OR_EXIT(res, listen(listenfd, 511), "listen");
-  set_nonblock(listenfd);
-  return listenfd;
+void serve_flash_policy(EV_P) {
+  int listen_fd = create_listening_socket(843);
+  ev_io *w = malloc(sizeof(ev_io));
+  w->data = malloc(sizeof(listen_fd));
+  memcpy(w->data, &listen_fd, sizeof(listen_fd));
+  ev_io_init(w, flash_policy_conn_cb, listen_fd, EV_READ);
+  ev_io_start(EV_A_ w);
 }
+
