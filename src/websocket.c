@@ -3,6 +3,7 @@
 extern http_parser_settings settings;
 
 void ws_initialize(transport *xprt) {
+  IGNORE_VAR(xprt);
   settings.on_header_field     = on_header_field;
   settings.on_header_value     = on_header_value;
   settings.on_headers_complete = on_headers_complete;
@@ -96,7 +97,6 @@ void ws_write_out(muxConn *mc, char *msg, int msg_len) {
     ev_io_start(mc->watcher);
 # endif
   }
-  return 0;
 }
 
 void ws_recv_msg(muxConn *mc, char *msg, int msg_len) {

@@ -1,7 +1,10 @@
 #include "connection.h"
 
 // ignore sigpipe
-static void sigpipe_cb(EV_P_ ev_signal *w, int revents) { IGNORE_VAR(EV_A); IGNORE_VAR(w); IGNORE_VAR(revents); }
+static void sigpipe_cb(EV_P_ ev_signal *w, int revents) {
+  IGNORE_VAR(EV_A); IGNORE_VAR(w); IGNORE_VAR(revents);
+  return;
+}
 
 static void shutdown_server(EV_P_ ev_signal *w, int revents) {
   IGNORE_VAR(w); IGNORE_VAR(revents);

@@ -47,7 +47,6 @@ void fp_write_out(muxConn *mc, char *msg, int msg_len) {
     ev_io_start(mc->watcher);
 # endif
   }
-  return 0;
 }
 
 void fp_free_data(muxConn *mc) {
