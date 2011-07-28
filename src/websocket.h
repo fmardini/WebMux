@@ -6,21 +6,6 @@
 #include <openssl/md5.h>
 #include "http_parser.h"
 
-#define MAX_HEADERS 32
-
-typedef struct header {
-  char   *field;
-  size_t field_len;
-  char   *value;
-  size_t value_len;
-} header;
-
-typedef struct {
-  header list[MAX_HEADERS];
-  int last_was_value;
-  int num_headers;
-} headers;
-
 typedef struct {
   http_parser *parser;
   headers hs;

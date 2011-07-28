@@ -12,7 +12,7 @@ static void shutdown_server(EV_P_ ev_signal *w, int revents) {
   dictEntry *de;
   dictIterator *iter = dictGetIterator(active_connections);
   while ((de = dictNext(iter)) != NULL) {
-    muxConn * mc = de->val;
+    muxConn *mc = de->val;
     // stop any pending writes
     ev_io_stop(EV_A_ mc->watcher);
     disconnectAndClean(mc);
@@ -139,22 +139,6 @@ void conn_write_cb(EV_P_ ev_io *w, int revents) {
   }
 }
 
-int create_listening_socket(int port) {
-  int listenfd, optval = 1, res;
-  struct sockaddr_in servaddr;
-
-  memset(&servaddr, 0, sizeof(servaddr));
-  TRY_OR_EXIT(listenfd, socket(AF_INET, SOCK_STREAM, 0), "socket");
-  setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  servaddr.sin_family      = AF_INET;
-  servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  servaddr.sin_port        = htons(port);
-  TRY_OR_EXIT(res, bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)), "bind");
-  TRY_OR_EXIT(res, listen(listenfd, 511), "listen");
-  set_nonblock(listenfd);
-  return listenfd;
-}
-
 void disconnectAndClean(muxConn *mc) {
   if (DICT_ERR == dictDelete(active_connections, mc->connfd)) { fprintf(stderr, "(BUG) CONNECTION ALREADY REMOVED FROM HASH"); }
   close(mc->connfd);
@@ -164,9 +148,10 @@ void disconnectAndClean(muxConn *mc) {
   if (mc->updates_watcher != NULL) {
     ev_timer_stop(mc->loop, mc->updates_watcher); free(mc->updates_watcher);
   }
-  mc->xprt->xprt_free_data(mc);
   free(mc->in_buf);
   free(mc->outBuf);
+
+  mc->xprt->xprt_free_data(mc);
   free(mc);
 }
 

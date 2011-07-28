@@ -53,7 +53,6 @@ static void shutdown_server(EV_P_ ev_signal *w, int revents);
 void conn_accept_cb(EV_P_ ev_io *w, int revents);
 void conn_read_cb(EV_P_ ev_io *w, int revents);
 void conn_write_cb(EV_P_ ev_io *w, int revents);
-int create_listening_socket(int port);
 void disconnectAndClean(muxConn *mc);
 
 #endif
