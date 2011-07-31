@@ -52,7 +52,8 @@ int on_header_field(http_parser *parser, const char *at, size_t len) {
 
     st->last_header->field_len = len;
     st->last_header->field = malloc(len + 1);
-    strncpy(st->last_header->field, at, len);
+    memcpy(st->last_header->field, at, len);
+    st->last_header->field[len] = '\0';
   } else {
     if (st->headers == NULL) {
       st->headers = init_header();
@@ -61,7 +62,8 @@ int on_header_field(http_parser *parser, const char *at, size_t len) {
     int old_len = st->last_header->field_len;
     st->last_header->field_len += len;
     st->last_header->field = realloc(st->last_header->field, st->last_header->field_len + 1);
-    strncpy(st->last_header->field + old_len, at, len);
+    memcpy(st->last_header->field + old_len, at, len);
+    st->last_header->field[st->last_header->field_len] = '\0';
   }
 
   st->last_header_cb_was_value = 0;
@@ -73,12 +75,14 @@ int on_header_value(http_parser *parser, const char *at, size_t len) {
   if (!st->last_header_cb_was_value) {
     st->last_header->value_len = len;
     st->last_header->value = malloc(len + 1);
-    strncpy(st->last_header->value, at, len);
+    memcpy(st->last_header->value, at, len);
+    st->last_header->value[len] = '\0';
   } else {
     int old_len = st->last_header->value_len;
     st->last_header->value_len += len;
     st->last_header->value = realloc(st->last_header->value, st->last_header->value_len + 1);
-    strncpy(st->last_header->value + old_len, at, len);
+    memcpy(st->last_header->value + old_len, at, len);
+    st->last_header->value[st->last_header->value_len] = '\0';
   }
 
   st->last_header_cb_was_value = 1;

@@ -27,9 +27,9 @@ static int on_message_complete(http_parser *parser) {
 static void po_reset_xprt_data(po_transport_data *data) {
   http_state *st = data->st;
   http_parser_init(st->parser, HTTP_REQUEST);
+  free_headers(st);
   if (data->body != NULL) { free(data->body); data->body_len = 0; }
   if (data->req_url != NULL) { free(data->req_url); data->url_len = 0; }
-  free_headers(st);
 }
 
 void po_initialize(transport *xprt) {
@@ -112,7 +112,8 @@ static int on_body(http_parser *parser, const char *at, size_t len) {
   po_transport_data *data = mc->transport_data;
   data->body              = malloc(len + 1);
   data->body_len          = len;
-  strncpy(data->body, at, len);
+  memcpy(data->body, at, len);
+  data->body[len]         = '\0';
   return 0;
 }
 
@@ -122,7 +123,8 @@ int on_url(http_parser *parser, const char *at, size_t len) {
   po_transport_data *data = mc->transport_data;
   data->req_url           = malloc(len + 1);
   data->url_len           = len;
-  strncpy(data->req_url, at, len);
+  memcpy(data->req_url, at, len);
+  data->req_url[len]      = '\0';
   return 0;
 }
 

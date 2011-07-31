@@ -180,7 +180,8 @@ int on_url(http_parser *parser, const char *at, size_t len) {
   muxConn *mc             = st->mc;
   ws_transport_data *data = mc->transport_data;
   data->req_path          = malloc(len + 1);
-  strncpy(data->req_path, at, len);
+  memcpy(data->req_path, at, len);
+  data->req_path[len]     = '\0';
   return 0;
 }
 
