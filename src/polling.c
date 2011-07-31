@@ -71,12 +71,6 @@ void po_free_data(muxConn *mc) {
   free(data);
 }
 
-#define OB_GROW_IF_NEEDED(MC, LAST, CON_LEN, SOFAR) do {      \
-    (PTR) += (LAST);                                          \
-    (SOFAR) += (LAST);                                        \
-    if ((SOFAR) >= (CUR_LEN)) { return -1; }                  \
-  } while (0)
-
 void po_write_out(muxConn *mc, char *msg, int msg_len) {
   po_transport_data *data = mc->transport_data;
   char hds[512];

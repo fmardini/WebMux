@@ -73,7 +73,10 @@ void ws_write_out(muxConn *mc, char *msg, int msg_len) {
   ws_transport_data *data = mc->transport_data;
   int needed = mc->outBufOffset + mc->outBufToWrite + msg_len;
   // grow output buffer if needed
-  if (mc->outBufLen < needed) { mc->outBuf = realloc(mc->outBuf, needed * 1.2); }
+  if (mc->outBufLen < needed) {
+    mc->outBufLen = needed * 1.2;
+    mc->outBuf = realloc(mc->outBuf, mc->outBufLen);
+  }
   int p = mc->outBufOffset + mc->outBufToWrite;
   int add_frame = data->handshakeDone;
   if (add_frame) mc->outBuf[p] = '\x00';

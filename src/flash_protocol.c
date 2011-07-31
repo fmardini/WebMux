@@ -36,7 +36,10 @@ void fp_write_out(muxConn *mc, char *msg, int msg_len) {
   // should not attempt to write to the client before it sends the handshake
   int needed = mc->outBufOffset + mc->outBufToWrite + msg_len + 2; // \r\n
   // grow output buffer if needed
-  if (mc->outBufLen < needed) { mc->outBuf = realloc(mc->outBuf, needed * 1.2); }
+  if (mc->outBufLen < needed) {
+    mc->outBufLen = needed * 1.2;
+    mc->outBuf = realloc(mc->outBuf, mc->outBufLen);
+  }
   int p = mc->outBufOffset + mc->outBufToWrite;
   memcpy(mc->outBuf + p, msg, msg_len);
   mc->outBufToWrite += msg_len + 2;
