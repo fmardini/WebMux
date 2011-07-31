@@ -28,8 +28,8 @@ static void po_reset_xprt_data(po_transport_data *data) {
   http_state *st = data->st;
   http_parser_init(st->parser, HTTP_REQUEST);
   free_headers(st);
-  if (data->body != NULL) { free(data->body); data->body_len = 0; }
-  if (data->req_url != NULL) { free(data->req_url); data->url_len = 0; }
+  if (data->body != NULL) { free(data->body); data->body = NULL; data->body_len = 0; }
+  if (data->req_url != NULL) { free(data->req_url); data->req_url = NULL; data->url_len = 0; }
 }
 
 void po_initialize(transport *xprt) {

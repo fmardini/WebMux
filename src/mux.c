@@ -45,5 +45,7 @@ int main(int argc, char **argv) {
   uq_redis_connect(EV_DEFAULT);
   ev_run(EV_DEFAULT_ 0);
 
+  finalize_connections();
+
   return 0;
 }
