@@ -1,23 +1,23 @@
 #include "websocket.h"
 
-extern http_parser_settings settings;
+extern http_parser_settings ws_settings;
 
 void ws_initialize(transport *xprt) {
   IGNORE_VAR(xprt);
-  settings.on_header_field     = on_header_field;
-  settings.on_header_value     = on_header_value;
-  settings.on_headers_complete = on_headers_complete;
-  settings.on_url              = on_url;
+  ws_settings.on_header_field     = on_header_field;
+  ws_settings.on_header_value     = on_header_value;
+  ws_settings.on_headers_complete = on_headers_complete;
+  ws_settings.on_url              = on_url;
 }
 
 void ws_read_cb(muxConn *mc, ssize_t recved) {
   ws_transport_data *data = mc->transport_data;
 
   if (!data->handshakeDone) {
-    // no need to update in_buf_contents, once parsed data can be discarded
+    // no need to update in_buf_contents, once parsed, data can be discarded
     ssize_t len_parsed;
-    http_parser *parser = data->parser;
-    len_parsed = http_parser_execute(parser, &settings, mc->in_buf, recved);
+    http_parser *parser = data->st->parser;
+    len_parsed = http_parser_execute(parser, &ws_settings, mc->in_buf, recved);
 
     if (parser->upgrade) {
       if (recved - len_parsed == 8) {
@@ -58,21 +58,13 @@ void ws_read_cb(muxConn *mc, ssize_t recved) {
 
 void ws_conn_cb(muxConn *mc) {
   ws_transport_data *data = calloc(1, sizeof(ws_transport_data));
-  http_parser *parser = malloc(sizeof(http_parser));
-  http_parser_init(parser, HTTP_REQUEST);
-  parser->data = mc;
-  data->parser = parser;
+  data->st = init_http_state(mc, header_cb);
   mc->transport_data = data;
 }
 
 void ws_free_data(muxConn *mc) {
   ws_transport_data *data = mc->transport_data;
-  free(data->parser);
-  header p;
-  for (int i = 0; i < data->hs.num_headers; i++) {
-    p = data->hs.list[i];
-    free(p.field); free(p.value);
-  }
+  free_http_state(data->st);
   if (data->req_path != NULL) { free(data->req_path); }
   free(data);
 }
@@ -168,9 +160,9 @@ static int handshake_connection(muxConn *conn) {
   return 0;
 }
 
-static void process_last_header(muxConn *conn) {
-  ws_transport_data *data = conn->transport_data;
-  header *last_header = &data->hs.list[data->hs.num_headers];
+static void header_cb(http_state *st) {
+  ws_transport_data *data = st->mc->transport_data;
+  header *last_header     = st->last_header;
   if (strstr(last_header->field, "Sec-WebSocket-Key")) {
     int idx = *(last_header->field + strlen("Sec-WebSocket-Key")) - '1';
     if (0 <= idx && idx <= 1) { data->keys[idx] = last_header->value; }
@@ -183,67 +175,12 @@ static void process_last_header(muxConn *conn) {
   }
 }
 
-static int on_header_field(http_parser *parser, const char *at, size_t len) {
-  muxConn *conn = (muxConn *)parser->data;
-  ws_transport_data *data = conn->transport_data;
-  if (data->hs.last_was_value) {
-    // last_header points to a complete header, do any processing
-    process_last_header(conn);
-
-    data->hs.num_headers++;
-
-    CURRENT_LINE(data)->value = NULL;
-    CURRENT_LINE(data)->value_len = 0;
-
-    CURRENT_LINE(data)->field_len = len;
-    CURRENT_LINE(data)->field = malloc(len+1);
-    strncpy(CURRENT_LINE(data)->field, at, len);
-  } else {
-    assert(CURRENT_LINE(data)->value == NULL);
-    assert(CURRENT_LINE(data)->value_len == 0);
-
-    CURRENT_LINE(data)->field_len += len;
-    CURRENT_LINE(data)->field = realloc(CURRENT_LINE(data)->field, CURRENT_LINE(data)->field_len + 1);
-    strncat(CURRENT_LINE(data)->field, at, len);
-  }
-
-  CURRENT_LINE(data)->field[CURRENT_LINE(data)->field_len] = '\0';
-  data->hs.last_was_value = 0;
-  return 0;
-}
-
-int on_header_value(http_parser *parser, const char *at, size_t len) {
-  muxConn *conn = (muxConn *)parser->data;
-  ws_transport_data *data = conn->transport_data;
-  if (!data->hs.last_was_value) {
-    CURRENT_LINE(data)->value_len = len;
-    CURRENT_LINE(data)->value = malloc(len+1);
-    strncpy(CURRENT_LINE(data)->value, at, len);
-  } else {
-    CURRENT_LINE(data)->value_len += len;
-    CURRENT_LINE(data)->value = realloc(CURRENT_LINE(data)->value, CURRENT_LINE(data)->value_len + 1);
-    strncat(CURRENT_LINE(data)->value, at, len);
-  }
-
-  CURRENT_LINE(data)->value[CURRENT_LINE(data)->value_len] = '\0';
-  data->hs.last_was_value = 1;
-  return 0;
-}
-
-int on_headers_complete(http_parser *parser) {
-  muxConn *conn = (muxConn *)parser->data;
-  ws_transport_data *data = conn->transport_data;
-  process_last_header(conn);
-  data->hs.num_headers++;
-  return 0;
-}
-
 int on_url(http_parser *parser, const char *at, size_t len) {
-  muxConn *conn = (muxConn *)parser->data;
-  ws_transport_data *data = conn->transport_data;
-  data->req_path = (char *)malloc(sizeof(char) * (len + 1));
-  memcpy(data->req_path, at, len);
-  data->req_path[len] = '\0';
+  http_state *st          = parser->data;
+  muxConn *mc             = st->mc;
+  ws_transport_data *data = mc->transport_data;
+  data->req_path          = malloc(len + 1);
+  strncpy(data->req_path, at, len);
   return 0;
 }
 

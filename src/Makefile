@@ -1,4 +1,4 @@
-OBJS=transport.o polling.o connection.o net_helpers.o websocket.o mux.o flash_policy.o flash_protocol.o
+OBJS=http_helpers.o transport.o polling.o connection.o net_helpers.o websocket.o mux.o flash_policy.o flash_protocol.o
 BINS=mux
 
 BASIC_DEPS=Makefile
@@ -22,14 +22,15 @@ all: $(BINS) $(DEPS_LIB_BINS)
 
 BASIC_DEPS=Makefile common.h
 
-mux.o            : $(BASIC_DEPS) mux.c websocket.h  net_helpers.h
+mux.o            : $(BASIC_DEPS) mux.c flash_policy.h net_helpers.h flash_protocol.h transport.h connection.h
 net_helpers.o    : $(BASIC_DEPS) net_helpers.c net_helpers.h
-flash_protocol.o : $(BASIC_DEPS) flash_protocol.c websocket.h net_helpers.h
+flash_protocol.o : $(BASIC_DEPS) flash_protocol.c flash_protocol.h transport.h connection.h net_helpers.h
 flash_policy.o   : $(BASIC_DEPS) flash_policy.c flash_policy.h net_helpers.h
-websocket.o      : $(BASIC_DEPS) websocket.c websocket.h
-polling.o        : $(BASIC_DEPS) polling.c polling.h
-connection.o     : $(BASIC_DEPS) connection.c connection.h
-transport.o      : $(BASIC_DEPS) transport.c transport.h
+websocket.o      : $(BASIC_DEPS) websocket.c websocket.h transport.h connection.h net_helpers.h
+polling.o        : $(BASIC_DEPS) polling.c polling.h transport.h connection.h net_helpers.h
+connection.o     : $(BASIC_DEPS) connection.c connection.h transport.h net_helpers.h
+transport.o      : $(BASIC_DEPS) transport.c transport.h connection.h net_helpers.h
+http_helpers.o   : $(BASIC_DEPS) http_helpers.c http_helpers.h connection.h transport.h net_helpers.h
 
 ../deps/http-parser/http_parser.o:
 	make -C ../deps/http-parser

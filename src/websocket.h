@@ -4,11 +4,10 @@
 #include "common.h"
 #include "transport.h"
 #include <openssl/md5.h>
-#include "http_parser.h"
+#include "http_helpers.h"
 
 typedef struct {
-  http_parser *parser;
-  headers hs;
+  http_state *st;
   char body[8];
   char *req_path;
   char *keys[2];  // points to value in headers list
@@ -20,8 +19,6 @@ typedef struct {
   int handshakeDone;
 } ws_transport_data;
 
-
-#define CURRENT_LINE(_mc) (&(_mc)->hs.list[(_mc)->hs.num_headers])
 
 void ws_initialize(transport *xprt);
 void ws_conn_cb(muxConn *mc);
@@ -35,13 +32,9 @@ static int process_key(char *k, unsigned int *res);
 static int compute_checksum(char *f1, char *f2, char *last8, unsigned char *out);
 static int server_handshake(unsigned char *md5, char *origin, char *loc, char *protocol, char *resp, int resp_len);
 static int handshake_connection(muxConn *conn);
-static void process_last_header(muxConn *conn);
-static int on_header_field(http_parser *parser, const char *at, size_t len);
-static int on_header_value(http_parser *parser, const char *at, size_t len);
-static int on_headers_complete(http_parser *parser);
+static void header_cb(http_state *st);
 static int on_url(http_parser *parser, const char *at, size_t len);
 
-http_parser_settings settings;
-
+http_parser_settings ws_settings;
 
 #endif
